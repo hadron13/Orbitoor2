@@ -13,7 +13,6 @@ import glm "core:math/linalg/glsl"
 
 vec2 :: [2]f32
 vec3 :: [3]f32
-color :: [4]f32
 
 body :: struct{
     mass : f32,
@@ -22,36 +21,84 @@ body :: struct{
 }
 
 celestial_body_type :: enum{    
-    STAR, PLANET
+    STAR, ROCKY_PLANET, GAS_PLANET, ASTEROID, BLACK_HOLE
 }
 
 
 celestial_body :: struct{
     type : celestial_body_type,
+    name : string,
+    physic_body : body,
+    radius : f32,
+    rotation_axis : vec3,
+    rotation_speed : f32,
+
     temperature : f32,
-    primary_color : color,
-    secondary_color: color, 
+    primary_color : vec3, 
+    secondary_color: vec3,
+    
+    has_atmosphere : bool,
+    atmosphere_height : f32,
+    atmospheric_density : f32,
+    rayleigh_coefficient : vec3,
+    mie_coefficient: vec3, 
+
+    has_sea : bool,
+    sea_color : vec3,
+
+    has_ice_caps: bool,
+    ice_cap_range : f32,
+    ice_color : vec3,
+
+}
+
+planet_shader : u32
+planet_shader_uniforms : map[string]gl.Uniform_Info
+quad_vao : u32
+
+draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32){
+
+    gl.UseProgram(planet_shader) 
+    gl.Uniform2f(planet_shader_uniforms["resolution"].location, f32(width), f32(height))
+    gl.Uniform1f(planet_shader_uniforms["time"].location, time)
+    gl.Uniform3fv(planet_shader_uniforms["camera_pos"].location, 1, &camera.position[0])
+    gl.Uniform3fv(planet_shader_uniforms["camera_dir"].location, 1, &camera.front[0])
+    
+    gl.Uniform3fv(planet_shader_uniforms["planet_origin"].location, 1, &body.physic_body.position[0])
+    gl.Uniform1f(planet_shader_uniforms["planet_radius"].location, body.radius)
+    gl.Uniform3fv(planet_shader_uniforms["planet_axis"].location, 1, &body.rotation_axis[0])
+    gl.Uniform1f(planet_shader_uniforms["planet_rotation_speed"].location, body.rotation_speed)
+    
+    gl.Uniform3fv(planet_shader_uniforms["planet_color1"].location, 1, &body.primary_color[0])
+    gl.Uniform3fv(planet_shader_uniforms["planet_color2"].location, 1, &body.secondary_color[0])
+    gl.Uniform3fv(planet_shader_uniforms["planet_color_sea"].location, 1, &body.sea_color[0])
+    
+
+    gl.BindVertexArray(quad_vao)
+    gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
 }
 
 
 
 camera :: struct{
-    position : [3]f32, 
-    velocity : [3]f32,
+    position : vec3, 
+    velocity : vec3,
     yaw,pitch: f32,
     fov      : f32,
+    front    : vec3
 }
 
 main_camera : camera
 
-camera_update :: proc"c"(camera : ^camera, delta_time : f32) -> (glm.mat4, vec3){
+camera_update :: proc"c"(camera : ^camera, delta_time : f32) -> (glm.mat4){
 
-    front :[3]f32= glm.normalize(
+    camera.front = glm.normalize(
     [3]f32{math.cos(glm.radians(camera.yaw)) * math.cos(glm.radians(camera.pitch)),
            math.sin(glm.radians(camera.pitch)),
            math.sin(glm.radians(camera.yaw)) * math.cos(glm.radians(camera.pitch))})
     
-    front_straight := glm.normalize([3]f32{front.x, 0, front.z})
+    front_straight := glm.normalize([3]f32{camera.front.x, 0, camera.front.z})
 
     up := [3]f32{0, 1, 0} 
     right := glm.normalize(glm.cross(up, front_straight))
@@ -60,7 +107,7 @@ camera_update :: proc"c"(camera : ^camera, delta_time : f32) -> (glm.mat4, vec3)
     camera.position += up             * main_camera.velocity.y * delta_time
     camera.position -= front_straight * main_camera.velocity.z * delta_time 
 
-    return glm.mat4LookAt(main_camera.position, main_camera.position + front, {0, 1, 0}), front
+    return glm.mat4LookAt(main_camera.position, main_camera.position + camera.front, {0, 1, 0})
 
 }
 
@@ -89,6 +136,8 @@ main :: proc(){
     fmt.printfln("vendor: %s", gl.GetString(gl.VENDOR) )
     
     gl.Enable(gl.FRAMEBUFFER_SRGB)
+    gl.Enable(gl.DEPTH_TEST)
+    gl.DepthFunc(gl.LESS);
 
     quad : []f32 = {
        -1.0,-1.0, 0, 0, 0,
@@ -99,7 +148,7 @@ main :: proc(){
         1.0, 1.0, 0, 1, 1
     }
     
-    quad_vbo, quad_vao: u32
+    quad_vbo: u32
     gl.GenVertexArrays(1, &quad_vao)
     gl.GenBuffers(1, &quad_vbo)
     
@@ -123,7 +172,9 @@ main :: proc(){
     FRAGMENT_SHADER_PATH :: "shaders/planet.frag.glsl"
 
     shader, ok := gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
+    planet_shader = shader;
     uniforms := gl.get_uniforms_from_program(shader)
+    planet_shader_uniforms = uniforms
 
     if !ok {
         a, b, c, d := gl.get_last_error_messages()
@@ -138,8 +189,7 @@ main :: proc(){
     width, height : c.int
     sdl3.GetWindowSize(window, &width, &height)
 
-
-    main_camera = {{0, 0, -2.0}, {0, 0, 0}, 0, 0, 90}
+    main_camera = { position = {0, 0, -2.0}, fov = 90 }
 
     loop:
     for{
@@ -149,17 +199,6 @@ main :: proc(){
                 case .QUIT:
                     break loop
                 case .KEY_UP:
-                    if(event.key.key == sdl3.GetKeyFromName("r")){
-                        shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
-                        uniforms = gl.get_uniforms_from_program(shader)
-
-                        if !ok {
-                            a, b, c, d := gl.get_last_error_messages()
-                            fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
-                        }else{
-                            fmt.printfln("Shaders loaded")
-                        }
-                    }
                     switch(event.key.key){
                     case sdl3.K_W: main_camera.velocity.z = 0
                     case sdl3.K_A: main_camera.velocity.x = 0
@@ -213,29 +252,63 @@ main :: proc(){
             }else{
                 fmt.printfln("Shaders loaded")
             }
+            planet_shader = shader;
+            planet_shader_uniforms = uniforms
             last_modification = stat.modification_time
         }
         
         model := glm.identity(glm.mat4)
-        view, front := camera_update(&main_camera, 0.1)
+        view := camera_update(&main_camera, 0.1)
         projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.01)
 
         gl.UseProgram(shader) 
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+        time := f32(sdl3.GetTicks())/1000.0;
+
+        earth := celestial_body{
+            type = .ROCKY_PLANET,
+            name = "Earth",
+            physic_body = {
+                position = {0, 0, 0},
+                velocity = {0, 0, 0},
+                mass = 1.0
+            },
+            radius = 1.0,
+            rotation_axis = {0, 1.0, 0},
+            rotation_speed = 1.0, 
+            primary_color = {0.1, 0.6, 0.2},
+            secondary_color = {0.776,0.69,0.239},
+            sea_color = {0, 0, 0.8},
+            has_atmosphere = true,  
+        }
+
+        mars := celestial_body{
+            type = .ROCKY_PLANET,
+            name = "Mars",
+            physic_body = {
+                position = {5, 0, 0},
+                velocity = {0, 0, 0},
+                mass = 1.0
+            },
+            radius = 0.5,
+            rotation_axis = {0, 1.0, 0},
+            rotation_speed = 2.0, 
+            primary_color = {0.8, 0.2, 0.2},
+            secondary_color = {0.776,0.69,0.239},
+            sea_color = {0, 0, 0.8},
+            has_atmosphere = true,  
+        }
+        mars.physic_body.position = {math.sin(time) * 5, 0, math.cos(time) * 5}
         
-        gl.Uniform2f(uniforms["resolution"].location, f32(width), f32(height));
-        gl.Uniform1f(uniforms["time"].location, f32(sdl3.GetTicks())/1000.0)
-        gl.UniformMatrix4fv(uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
-        gl.UniformMatrix4fv(uniforms["view"].location, 1, gl.FALSE, &view[0,0])
-        gl.UniformMatrix4fv(uniforms["model"].location, 1, gl.FALSE, &model[0,0])
-    
-        gl.Uniform3fv(uniforms["camera_pos"].location, 1, &main_camera.position[0]);
-        gl.Uniform3fv(uniforms["camera_dir"].location, 1, &front[0]);
+        draw_celestial_body(&mars, &main_camera, time, width, height)
+        draw_celestial_body(&earth, &main_camera, time, width, height)
 
-        gl.BindVertexArray(quad_vao)
 
-        gl.DrawArrays(gl.TRIANGLES, 0, 6)
+        // gl.UniformMatrix4fv(uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
+        // gl.UniformMatrix4fv(uniforms["view"].location, 1, gl.FALSE, &view[0,0])
+        // gl.UniformMatrix4fv(uniforms["model"].location, 1, gl.FALSE, &model[0,0])
 
         sdl3.GL_SwapWindow(window)
     }

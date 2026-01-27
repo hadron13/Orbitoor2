@@ -106,10 +106,6 @@ float snoise(vec3 v)
 
 
 
-uniform float time;
-uniform vec2 resolution;
-uniform vec3 camera_pos;
-uniform vec3 camera_dir;
 
 
 vec2 sphIntersect( in vec3 ro, in vec3 rd, in vec3 ce, float ra ){
@@ -163,6 +159,20 @@ vec3 ray_dir( float fov, vec2 size, vec2 pos ) {
 	return normalize( vec3( xy, -z ) );
 }
 
+
+uniform float time;
+uniform vec2 resolution;
+uniform vec3 camera_pos;
+uniform vec3 camera_dir;
+
+uniform vec3  planet_origin;
+uniform float planet_radius;
+uniform vec3  planet_axis;
+uniform float planet_rotation_speed;
+uniform vec3  planet_color1;
+uniform vec3  planet_color2;
+uniform vec3  planet_color_sea;
+
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
     vec2 centered_uv = (uv - 0.5)*2;
@@ -174,15 +184,24 @@ void main(){
     vec3 ray_direction = normalize(centered_uv.x * cam_right + centered_uv.y * cam_up + camera_dir );
     // vec3 ray_direction = normalize(camera_dir + ray_dir( 90.0, resolution.xy, gl_FragCoord.xy ));
 
-    // vec3 sphere_origin = vec3(sin(time), 0, cos(time));
-    vec3 sphere_origin = vec3(0);
+    vec3 sphere_origin = planet_origin;
 
-    vec2 intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, 1.0f);
-    vec2 atm_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, 1.2f);
+    vec2 intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius);
+    vec2 atm_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius + 0.2f);
 
     if(atm_intersection.y < 0.0){
         discard;
     }
+
+    float z_far = 10.0;
+    float z_near = 0.1;
+
+    float A = (z_far + z_near) / (z_far - z_near);
+    float B = (-2.0 * z_far * z_near) / (z_far - z_near);
+
+    float ndc = A + 1/atm_intersection.x * B;
+
+    gl_FragDepth = ndc * -1.5 + 0.5;
 
     vec3 intersection_point = ray_origin + ray_direction * intersection.x - sphere_origin;
 
@@ -190,7 +209,7 @@ void main(){
     vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
   
-    intersection_point *= rotation_mat(vec3(0, 1.0f, 0), -time/10);
+    intersection_point *= rotation_mat(planet_axis, time * planet_rotation_speed);
     float height = ridged(intersection_point);
     
     float eps = 0.0005;
@@ -206,9 +225,9 @@ void main(){
     vec3 atm_color = vec3(0, 0, 0.6); 
 
     if(height > 1.1){
-        ground_color = vec3(0.1, 0.6, 0.2);
+        ground_color = planet_color1;
     }else{
-        ground_color = vec3(0.1, 0.1, 0.8);
+        ground_color = planet_color_sea;
         normal = sphere_normal;
     }
     
@@ -221,5 +240,5 @@ void main(){
     }else{
         gl_FragColor = vec4(mix(diffuse * ground_color, atm_color, 0.2), 1.0);
     }
-    // gl_FragColor = vec4((normal/2.0f) + 0.5, 1.0);
+    gl_FragColor = vec4(gl_FragDepth);
 }
