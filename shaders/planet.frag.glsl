@@ -128,7 +128,7 @@ float ridged(vec3 p){
     float amplitude = 1.0f;
     int octaves = 8;
     for (int i = 0; i < octaves; i++){
-        float val = snoise(p * frequency); 
+        float val = snoise((p + i) * frequency); 
         val = 1-abs(val);
         val *= val;
 
@@ -139,14 +139,28 @@ float ridged(vec3 p){
     return value;
 }
 
-vec3 noise_normal(vec3 position){
-    float eps = 0.00001;
-    return normalize(vec3( 
-        ridged(position + vec3(eps, 0, 0)) - ridged(position - vec3(eps, 0, 0)),
-        ridged(position + vec3(0, eps, 0)) - ridged(position - vec3(0, eps, 0)),
-        ridged(position + vec3(0, 0, eps)) - ridged(position - vec3(0, 0, eps))
-    ));
+mat3 rotation_mat(vec3 axis, float angle) {
+    axis = normalize(axis);
+    float s = sin(angle);
+    float c = cos(angle);
+    float oc = 1.0 - c;
 
+    return mat3(
+    oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,  
+    oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,  
+    oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c   
+    );
+}
+
+
+
+vec3 ray_dir( float fov, vec2 size, vec2 pos ) {
+	vec2 xy = pos - size * 0.5;
+
+	float cot_half_fov = tan( radians( 90.0 - fov * 0.5 ) );	
+	float z = size.y * -0.5 * cot_half_fov;
+	
+	return normalize( vec3( xy, -z ) );
 }
 
 void main(){
@@ -158,31 +172,54 @@ void main(){
 
     vec3 ray_origin = camera_pos;
     vec3 ray_direction = normalize(centered_uv.x * cam_right + centered_uv.y * cam_up + camera_dir );
+    // vec3 ray_direction = normalize(camera_dir + ray_dir( 90.0, resolution.xy, gl_FragCoord.xy ));
 
-    vec2 intersection = sphIntersect(ray_origin, ray_direction, vec3(0), 1.0f);
+    // vec3 sphere_origin = vec3(sin(time), 0, cos(time));
+    vec3 sphere_origin = vec3(0);
 
-    if(intersection.y < 0.0){
+    vec2 intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, 1.0f);
+    vec2 atm_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, 1.2f);
+
+    if(atm_intersection.y < 0.0){
         discard;
     }
 
-    vec3 intersection_point = ray_origin + ray_direction * intersection.x;
+    vec3 intersection_point = ray_origin + ray_direction * intersection.x - sphere_origin;
 
-
-    vec3 sphere_normal = normalize(vec3(0) - intersection_point); 
-    vec3 tangent_right = normalize(cross(sphere_normal, vec3(0, 1.0, 0)));
+    vec3 sphere_normal = normalize(intersection_point); 
+    vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
-    
+  
+    intersection_point *= rotation_mat(vec3(0, 1.0f, 0), -time/10);
     float height = ridged(intersection_point);
+    
+    float eps = 0.0005;
+    float height_north = ridged(intersection_point + eps * tangent_up);
+    float height_south = ridged(intersection_point - eps * tangent_up);
+    float height_east = ridged(intersection_point  + eps * tangent_right);
+    float height_west = ridged(intersection_point  - eps * tangent_right);
 
-    float height_north = ridged(intersection_point + 0.001 * tangent_up);
-    float height_south = ridged(intersection_point - 0.001 * tangent_up);
-    float height_east = ridged(intersection_point  + 0.001 * tangent_right);
-    float height_west = ridged(intersection_point  - 0.001 * tangent_right);
-
-    vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.1));
+    vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
     vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
 
-    float diffuse = max(0.01, dot(normal, vec3(1.0f, 0, 1.0f)));
+    vec3 ground_color = vec3(0, 0, 0);
+    vec3 atm_color = vec3(0, 0, 0.6); 
 
-    gl_FragColor = vec4(vec3(diffuse), 1.0);
+    if(height > 1.1){
+        ground_color = vec3(0.1, 0.6, 0.2);
+    }else{
+        ground_color = vec3(0.1, 0.1, 0.8);
+        normal = sphere_normal;
+    }
+    
+    float diffuse = max(0.0,dot(sphere_normal, vec3(1.0f, 0, 0)) * max(0.1, dot(normal, vec3(1.0f, 0, 0) ))  );
+    
+    float atm_factor = clamp(4.0 - exp(1*-(atm_intersection.x - atm_intersection.y)), 0, 1.0);
+
+    if(intersection.y < 0.0){ 
+        gl_FragColor = vec4(mix(vec3(0), atm_color, 1.0 - atm_factor), 1.0);
+    }else{
+        gl_FragColor = vec4(mix(diffuse * ground_color, atm_color, 0.2), 1.0);
+    }
+    // gl_FragColor = vec4((normal/2.0f) + 0.5, 1.0);
 }

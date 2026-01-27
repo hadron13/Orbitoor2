@@ -29,5 +29,5 @@ void main(){
     model_view[2][1] = 0;
     model_view[2][2] = 1;
 
-    gl_Position = proj * model_view * vec4(aPos*2, 1.0);
+    gl_Position = vec4(aPos*2, 1.0);
 }
