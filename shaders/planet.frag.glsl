@@ -164,18 +164,23 @@ uniform vec2 resolution;
 uniform vec3 camera_pos;
 uniform vec3 camera_dir;
 
-uniform vec3  planet_origin;
-uniform float planet_radius;
-uniform vec3  planet_axis;
-uniform float planet_rotation_speed;
-uniform vec3  planet_color1;
-uniform vec3  planet_color2;
+uniform vec3  body_origin;
+uniform float body_radius;
+uniform vec3  body_axis;
+uniform float body_rotation_speed;
+uniform vec3  body_color1;
+uniform vec3  body_color2;
+uniform vec3  sun_position;
 
 uniform bool planet_has_sea;
 uniform vec3 planet_sea_color;
 
 uniform bool planet_has_atmosphere;
 uniform vec3 planet_atmosphere_color;
+
+uniform bool planet_has_ice_caps;
+uniform vec3 planet_ice_color;
+
 
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
@@ -188,14 +193,13 @@ void main(){
     vec3 ray_direction = normalize(centered_uv.x * cam_right + centered_uv.y * cam_up + camera_dir );
     // vec3 ray_direction = normalize(camera_dir + ray_dir( 90.0, resolution.xy, gl_FragCoord.xy ));
 
-    vec3 sphere_origin = planet_origin;
 
-    vec2 ground_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius);
+    vec2 ground_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius);
     vec2 atm_intersection = vec2(0);
     vec2 closest_intersection = ground_intersection;
 
     if(planet_has_atmosphere){
-        atm_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius * 1.2f);
+        atm_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius * 1.1f);
         closest_intersection = atm_intersection; 
         if(atm_intersection.y < 0.0){
             discard;
@@ -207,8 +211,8 @@ void main(){
     }
     
 
-
-    float z_far = 100.0;
+    gl_FragColor = vec4(body_color1, 1.0);
+    float z_far = 1000.0;
     float z_near = 0.1;
 
     float A = (z_far + z_near) / (z_far - z_near);
@@ -220,13 +224,13 @@ void main(){
     int octaves = 6 - clamp(int(sqrt(closest_intersection.x)), 0, 3);
 
 
-    vec3 intersection_point = ray_origin + ray_direction * ground_intersection.x - sphere_origin;
+    vec3 intersection_point = ray_origin + ray_direction * ground_intersection.x - body_origin; 
 
     vec3 sphere_normal = normalize(intersection_point); 
     vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
   
-    intersection_point *= rotation_mat(planet_axis, time * planet_rotation_speed);
+    intersection_point *= rotation_mat(body_axis, time * body_rotation_speed);
     float height = ridged(intersection_point, octaves);
     
     float eps = 0.0005;
@@ -238,14 +242,22 @@ void main(){
     vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
     vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
 
-    vec3 ground_color = planet_color1;
+    vec3 ground_color = body_color1;
 
     if(planet_has_sea && height < 1.1){
         ground_color = planet_sea_color;
         normal = sphere_normal;
     }
+
+    float polarness = abs(intersection_point.y) / (body_radius*0.8f);
+
+    if(planet_has_ice_caps && polarness + height*0.1 > 1.0){
+        ground_color = planet_ice_color;
+    }
+
+    vec3 sun_direction = normalize(sun_position - body_origin);
     
-    float diffuse = max(0.0,dot(sphere_normal, vec3(1.0f, 0, 0)) * max(0.1, dot(normal, vec3(1.0f, 0, 0) ))  );
+    float diffuse = max(0.0,dot(sphere_normal, sun_direction) * max(0.1, dot(normal, sun_direction ))  );
    
     float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
 
