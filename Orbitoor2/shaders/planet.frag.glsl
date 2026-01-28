@@ -118,10 +118,11 @@ vec2 sphIntersect( in vec3 ro, in vec3 rd, in vec3 ce, float ra ){
     return vec2( -b-h, -b+h );
 }
 
-float ridged(vec3 p, int octaves){
+float ridged(vec3 p){
     float value = 0; 
     float frequency = 1.0f;
     float amplitude = 1.0f;
+    int octaves = 8;
     for (int i = 0; i < octaves; i++){
         float val = snoise((p + i) * frequency); 
         val = 1-abs(val);
@@ -170,12 +171,7 @@ uniform vec3  planet_axis;
 uniform float planet_rotation_speed;
 uniform vec3  planet_color1;
 uniform vec3  planet_color2;
-
-uniform bool planet_has_sea;
-uniform vec3 planet_sea_color;
-
-uniform bool planet_has_atmosphere;
-uniform vec3 planet_atmosphere_color;
+uniform vec3  planet_color_sea;
 
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
@@ -190,72 +186,59 @@ void main(){
 
     vec3 sphere_origin = planet_origin;
 
-    vec2 ground_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius);
-    vec2 atm_intersection = vec2(0);
-    vec2 closest_intersection = ground_intersection;
+    vec2 intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius);
+    vec2 atm_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius + 0.2f);
 
-    if(planet_has_atmosphere){
-        atm_intersection = sphIntersect(ray_origin, ray_direction, sphere_origin, planet_radius * 1.2f);
-        closest_intersection = atm_intersection; 
-        if(atm_intersection.y < 0.0){
-            discard;
-        }
-    }else{
-        if(ground_intersection.y < 0.0){
-            discard;
-        }
+    if(atm_intersection.y < 0.0){
+        discard;
     }
-    
 
-
-    float z_far = 100.0;
+    float z_far = 10.0;
     float z_near = 0.1;
 
     float A = (z_far + z_near) / (z_far - z_near);
     float B = (-2.0 * z_far * z_near) / (z_far - z_near);
 
-    float depth = A + 1/closest_intersection.x * B;
-    gl_FragDepth = depth;
+    float ndc = A + 1/atm_intersection.x * B;
 
-    int octaves = 6 - clamp(int(sqrt(closest_intersection.x)), 0, 3);
+    gl_FragDepth = ndc * -1.5 + 0.5;
 
-
-    vec3 intersection_point = ray_origin + ray_direction * ground_intersection.x - sphere_origin;
+    vec3 intersection_point = ray_origin + ray_direction * intersection.x - sphere_origin;
 
     vec3 sphere_normal = normalize(intersection_point); 
     vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
   
     intersection_point *= rotation_mat(planet_axis, time * planet_rotation_speed);
-    float height = ridged(intersection_point, octaves);
+    float height = ridged(intersection_point);
     
     float eps = 0.0005;
-    float height_north = ridged(intersection_point + eps * tangent_up, octaves);
-    float height_south = ridged(intersection_point - eps * tangent_up, octaves);
-    float height_east = ridged(intersection_point  + eps * tangent_right, octaves);
-    float height_west = ridged(intersection_point  - eps * tangent_right, octaves);
+    float height_north = ridged(intersection_point + eps * tangent_up);
+    float height_south = ridged(intersection_point - eps * tangent_up);
+    float height_east = ridged(intersection_point  + eps * tangent_right);
+    float height_west = ridged(intersection_point  - eps * tangent_right);
 
     vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
     vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
 
-    vec3 ground_color = planet_color1;
+    vec3 ground_color = vec3(0, 0, 0);
+    vec3 atm_color = vec3(0, 0, 0.6); 
 
-    if(planet_has_sea && height < 1.1){
-        ground_color = planet_sea_color;
+    if(height > 1.1){
+        ground_color = planet_color1;
+    }else{
+        ground_color = planet_color_sea;
         normal = sphere_normal;
     }
     
     float diffuse = max(0.0,dot(sphere_normal, vec3(1.0f, 0, 0)) * max(0.1, dot(normal, vec3(1.0f, 0, 0) ))  );
-   
-    float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
+    
+    float atm_factor = clamp(4.0 - exp(1*-(atm_intersection.x - atm_intersection.y)), 0, 1.0);
 
-
-    float atm_factor = clamp(1.0 -exp(-atm_thickness * 0.4), 0, 1.0);
-
-    if(ground_intersection.y < 0.0){ 
-        gl_FragColor = vec4(mix(vec3(0), planet_atmosphere_color, atm_factor), 0.5);
+    if(intersection.y < 0.0){ 
+        gl_FragColor = vec4(mix(vec3(0), atm_color, 1.0 - atm_factor), 1.0);
     }else{
-        gl_FragColor = vec4(mix(diffuse * ground_color, planet_atmosphere_color, planet_has_atmosphere? 0.2 : 0), 1.0);
+        gl_FragColor = vec4(mix(diffuse * ground_color, atm_color, 0.2), 1.0);
     }
-    // gl_FragColor = vec4(gl_FragDepth);
+    gl_FragColor = vec4(gl_FragDepth);
 }

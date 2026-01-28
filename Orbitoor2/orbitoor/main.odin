@@ -8,7 +8,6 @@ import "core:os"
 import "core:time"
 import "core:c"
 import "core:math"
-import "core:sort"
 import glm "core:math/linalg/glsl"
 
 
@@ -45,7 +44,6 @@ celestial_body :: struct{
     mie_coefficient: vec3, 
 
     has_sea : bool,
-    sea_threshold: f32,
     sea_color : vec3,
 
     has_ice_caps: bool,
@@ -65,28 +63,16 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
     gl.Uniform1f(planet_shader_uniforms["time"].location, time)
     gl.Uniform3fv(planet_shader_uniforms["camera_pos"].location, 1, &camera.position[0])
     gl.Uniform3fv(planet_shader_uniforms["camera_dir"].location, 1, &camera.front[0])
-   
-    //physical params
+    
     gl.Uniform3fv(planet_shader_uniforms["planet_origin"].location, 1, &body.physic_body.position[0])
     gl.Uniform1f(planet_shader_uniforms["planet_radius"].location, body.radius)
     gl.Uniform3fv(planet_shader_uniforms["planet_axis"].location, 1, &body.rotation_axis[0])
     gl.Uniform1f(planet_shader_uniforms["planet_rotation_speed"].location, body.rotation_speed)
-   
-    //color params
+    
     gl.Uniform3fv(planet_shader_uniforms["planet_color1"].location, 1, &body.primary_color[0])
     gl.Uniform3fv(planet_shader_uniforms["planet_color2"].location, 1, &body.secondary_color[0])
-
-    //sea params
-    gl.Uniform1i(planet_shader_uniforms["planet_has_sea"].location, i32(body.has_sea))
-    if(body.has_sea){
-        gl.Uniform3fv(planet_shader_uniforms["planet_sea_color"].location, 1, &body.sea_color[0])
-    }
-   
-    //atmosphere params
-    gl.Uniform1i(planet_shader_uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
-    if(body.has_atmosphere){
-        gl.Uniform3fv(planet_shader_uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
-    }
+    gl.Uniform3fv(planet_shader_uniforms["planet_color_sea"].location, 1, &body.sea_color[0])
+    
 
     gl.BindVertexArray(quad_vao)
     gl.DrawArrays(gl.TRIANGLES, 0, 6)
@@ -151,10 +137,7 @@ main :: proc(){
     
     gl.Enable(gl.FRAMEBUFFER_SRGB)
     gl.Enable(gl.DEPTH_TEST)
-    gl.DepthFunc(gl.LESS)
-    gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-
+    gl.DepthFunc(gl.LESS);
 
     quad : []f32 = {
        -1.0,-1.0, 0, 0, 0,
@@ -297,10 +280,8 @@ main :: proc(){
             rotation_speed = 1.0, 
             primary_color = {0.1, 0.6, 0.2},
             secondary_color = {0.776,0.69,0.239},
-            has_sea = true,
             sea_color = {0, 0, 0.8},
             has_atmosphere = true,  
-            rayleigh_coefficient = {0, 0, 0.8}, 
         }
 
         mars := celestial_body{
@@ -316,40 +297,13 @@ main :: proc(){
             rotation_speed = 2.0, 
             primary_color = {0.8, 0.2, 0.2},
             secondary_color = {0.776,0.69,0.239},
-            has_sea = true,
             sea_color = {0, 0, 0.8},
             has_atmosphere = true,  
-            rayleigh_coefficient = {0.8, 0, 0}, 
         }
-
-        mercury := celestial_body{
-            type = .ROCKY_PLANET,
-            name = "Mercury",
-            physic_body = {
-                position = {0, 0, 10},
-                velocity = {0, 0, 0},
-                mass = 1.0
-            },
-            radius = 0.5,
-            rotation_axis = {0, 1.0, 0},
-            rotation_speed = 0.05, 
-            primary_color = {0.4, 0.4, 0.4},
-            secondary_color = {0.776,0.69,0.239},
-            has_sea = false,  
-            has_atmosphere = false,  
-        }
-        mars.physic_body.position = {math.sin(time/30) * 5, 0, math.cos(time/30) * 5}
-        mercury.physic_body.position = {math.sin(time/60) * 10, 0, math.cos(time/30) * 10}
-       
-        bodies :[]^celestial_body = {&earth, &mars, &mercury}
-        sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int{
-            return (glm.distance(a.physic_body.position, main_camera.position) > glm.distance(b.physic_body.position, main_camera.position))? -1 : 0;
-        })
-         
-
-        for body in bodies{
-            draw_celestial_body(body, &main_camera, time, width, height)
-        }
+        mars.physic_body.position = {math.sin(time) * 5, 0, math.cos(time) * 5}
+        
+        draw_celestial_body(&mars, &main_camera, time, width, height)
+        draw_celestial_body(&earth, &main_camera, time, width, height)
 
 
         // gl.UniformMatrix4fv(uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
