@@ -211,7 +211,6 @@ void main(){
     }
     
 
-    gl_FragColor = vec4(body_color1, 1.0);
     float z_far = 1000.0;
     float z_near = 0.1;
 
@@ -257,7 +256,7 @@ void main(){
 
     vec3 sun_direction = normalize(sun_position - body_origin);
     
-    float diffuse = max(0.0,dot(sphere_normal, sun_direction) * max(0.1, dot(normal, sun_direction ))  );
+    float diffuse = max(0.0, dot(sphere_normal, sun_direction) * max(0.1, dot(normal, sun_direction ))  );
    
     float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
 
@@ -269,5 +268,5 @@ void main(){
     }else{
         gl_FragColor = vec4(mix(diffuse * ground_color, planet_atmosphere_color, planet_has_atmosphere? 0.2 : 0), 1.0);
     }
-    // gl_FragColor = vec4(gl_FragDepth);
+    // gl_FragColor = vec4(vec3(intersection_point), 1.0);
 }

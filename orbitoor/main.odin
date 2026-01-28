@@ -58,6 +58,8 @@ planet_shader : u32
 planet_shader_uniforms : map[string]gl.Uniform_Info
 star_shader : u32
 star_shader_uniforms : map[string]gl.Uniform_Info
+background_shader : u32
+background_shader_uniforms : map[string]gl.Uniform_Info
 
 quad_vao : u32
 
@@ -170,6 +172,7 @@ main :: proc(){
     sdl3.GL_SetAttribute(sdl3.GLAttr.FRAMEBUFFER_SRGB_CAPABLE, 1)
 
     window := sdl3.CreateWindow("Orbitoor", 800, 1000, {.OPENGL, .RESIZABLE})
+    sdl3.MaximizeWindow(window)
     defer sdl3.DestroyWindow(window)
 
     gl_context := sdl3.GL_CreateContext(window)
@@ -215,13 +218,11 @@ main :: proc(){
     gl.BindBuffer(gl.ARRAY_BUFFER, 0)
     gl.BindVertexArray(0)
 
-    VERTEX_SHADER_PATH :: "shaders/quad.vert.glsl"
-    FRAGMENT_SHADER_PATH :: "shaders/star.frag.glsl"
 
-    vertex_shader_paths := []string{"shaders/quad.vert.glsl", "shaders/quad.vert.glsl"}
-    fragment_shader_paths := []string{"shaders/planet.frag.glsl", "shaders/star.frag.glsl"} 
-    shader_uniforms := []^map[string]gl.Uniform_Info{&planet_shader_uniforms, &star_shader_uniforms}
-    shader_programs := []^u32{&planet_shader, &star_shader}
+    vertex_shader_paths := []string{"shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/quad.vert.glsl"}
+    fragment_shader_paths := []string{"shaders/planet.frag.glsl", "shaders/star.frag.glsl", "shaders/background.frag.glsl"} 
+    shader_uniforms := []^map[string]gl.Uniform_Info{&planet_shader_uniforms, &star_shader_uniforms, &background_shader_uniforms}
+    shader_programs := []^u32{&planet_shader, &star_shader, &background_shader}
 
     ok: bool
     for i := 0; i < len(shader_programs); i+=1{
@@ -238,14 +239,8 @@ main :: proc(){
     }
     
 
-    // sdl3.Log("planet")
-    // for key, uniform in planet_shader_uniforms{
-    //     sdl3.Log("%s - %u", uniform.name, uniform.location)
-    // }
-    // sdl3.Log("star")
-    // for key, uniform in star_shader_uniforms{
-    //     sdl3.Log("%s - %u", uniform.name, uniform.location)
-    // }
+    VERTEX_SHADER_PATH :: "shaders/quad.vert.glsl"
+    FRAGMENT_SHADER_PATH :: "shaders/background.frag.glsl"
 
     stat, err := os.stat(FRAGMENT_SHADER_PATH)
     last_modification := stat.modification_time
@@ -259,9 +254,9 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Earth",
         physic_body = {
-            position = {0, 0, 35},
-            velocity = {1.0, 0, 0},
-            mass = 1.0
+            position = {0, 0, 40},
+            velocity = {4.0, 0, 0},
+            mass = 2.0
         },
         radius = 1.0,
         rotation_axis = {0, 1.0, 0},
@@ -280,9 +275,9 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Mars",
         physic_body = {
-            position = {0, 0, 40},
-            velocity = {0, 0, 0},
-            mass = 1.0
+            position = {0, 0, 55},
+            velocity = {3.5, 0, 0},
+            mass = 1.5
         },
         radius = 0.5,
         rotation_axis = {0, 1.0, 0},
@@ -301,12 +296,12 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Mercury",
         physic_body = {
-            position = {0, 0, 20},
-            velocity = {0, 0, 0},
+            position = {0, 0, 30},
+            velocity = {6.0, 0, 0},
             mass = 1.0
         },
         radius = 0.5,
-        rotation_axis = {0, 0, 0},
+        rotation_axis = {0, 1.0, 0},
         rotation_speed = 0.05, 
         primary_color = {0.4, 0.4, 0.4},
         secondary_color = {0.776,0.69,0.239},
@@ -318,17 +313,30 @@ main :: proc(){
         type = .STAR,
         name = "Sun",
         physic_body = {
-            position = {0, 0, 0},
-            velocity = {0, 0, 0},
-            mass = 100.0
+            position = {5.0, 0, 0},
+            velocity = {0, 0, -5.0},
+            mass = 150.0
         },
-        radius = 5.0,
+        radius = 4.0,
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
         primary_color = {0.957,0.933,0.659},
         temperature = 5000.0
     }
-
+    solus := celestial_body{
+        type = .STAR,
+        name = "Solus",
+        physic_body = {
+            position = {-5.0, 0, 0},
+            velocity = {0, 0, 5.0},
+            mass = 100.0
+        },
+        radius = 3.0,
+        rotation_axis = {0, 1.0, 0},
+        rotation_speed = 1.0, 
+        primary_color = {0.5,0.933,0.959},
+        temperature = 5000.0
+    }
 
     
     loop:
@@ -383,8 +391,8 @@ main :: proc(){
         }
         
         if stat, err = os.stat(FRAGMENT_SHADER_PATH); time.diff(last_modification, stat.modification_time) != 0{
-            star_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
-            star_shader_uniforms = gl.get_uniforms_from_program(planet_shader)
+            background_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
+            background_shader_uniforms = gl.get_uniforms_from_program(background_shader)
 
             if !ok {
                 a, b, c, d := gl.get_last_error_messages()
@@ -396,35 +404,42 @@ main :: proc(){
         }
         
         model := glm.identity(glm.mat4)
-        view := camera_update(&main_camera, 0.5)
+        view := camera_update(&main_camera, 1.5)
         projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.01)
 
-        gl.UseProgram(planet_shader) 
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+    
+        gl.UseProgram(background_shader)
+        gl.Uniform2f(background_shader_uniforms["resolution"].location, f32(width), f32(height))
+        gl.Uniform3fv(background_shader_uniforms["camera_dir"].location, 1, &main_camera.front[0])
+        gl.BindVertexArray(quad_vao)
+        gl.DrawArrays(gl.TRIANGLES, 0, 6)
+        
 
         time := f32(sdl3.GetTicks())/1000.0;
 
 
 
-        // mercury.physic_body.position = {math.sin(time/30) * 15, 0, math.cos(time/30) * 15}
-        // earth.physic_body.position = {math.sin(time/60) * 25, 0, math.cos(time/60) * 25}
-        // mars.physic_body.position = {math.sin(time/80) * 30, 0, math.cos(time/80) * 30}
-        // earth.physic_body.position += earth.physic_body.velocity
 
-        bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun}
+        bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus}
         sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int{
             return (glm.distance(a.physic_body.position, main_camera.position) > glm.distance(b.physic_body.position, main_camera.position))? -1 : 0;
         })
 
-        // sdl3.Log("%f %f %f", earth.physic_body.velocity.x, earth.physic_body.velocity.y, earth.physic_body.velocity.z)
-        sdl3.Log("%f %f %f", earth.physic_body.position.x, earth.physic_body.position.y, earth.physic_body.position.z)
-        sdl3.Log("%f %f %f", earth.physic_body.velocity.x, earth.physic_body.velocity.y, earth.physic_body.velocity.z)
+
         for body in &bodies{
-            if(body != &sun){
-                apply_gravity(&body.physic_body, &sun.physic_body)
-                apply_velocity(&body.physic_body, 1.0/165.0)
+            // if(body != &sun){
+            //     apply_gravity(&body.physic_body, &sun.physic_body)
+            //     apply_velocity(&body.physic_body, 1.0/165.0)
+            // }
+
+            for other_body in &bodies{
+                if(other_body != body){
+                    apply_gravity(&body.physic_body, &other_body.physic_body)
+                }
             }
+            apply_velocity(&body.physic_body, 1.0/165.0)
 
             draw_celestial_body(body, &main_camera, time, width, height, &sun.physic_body.position)
         }

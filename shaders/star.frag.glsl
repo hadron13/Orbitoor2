@@ -50,9 +50,12 @@ void main(){
 
     float depth = A + 1/outer_intersection.x * B;
     gl_FragDepth = depth;
+
+    float atmospheric_thickness = (outer_intersection.y - outer_intersection.x)/body_radius;
+
     
     if(inner_intersection.y < 0.0){
-        gl_FragColor = vec4(body_color1, 0.8);
+        gl_FragColor = vec4(body_color1, atmospheric_thickness);
     }else{
         gl_FragColor = vec4(body_color1, 1.0);
     }
