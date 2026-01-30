@@ -172,6 +172,9 @@ uniform vec3  body_color1;
 uniform vec3  body_color2;
 uniform vec3  sun_position;
 
+uniform vec3  light_positions[8];
+uniform vec4  light_colors[8];
+
 uniform bool planet_has_sea;
 uniform vec3 planet_sea_color;
 
@@ -190,7 +193,9 @@ void main(){
     vec3 cam_up = normalize(cross(cam_right, camera_dir));
 
     vec3 ray_origin = camera_pos;
-    vec3 ray_direction = normalize(centered_uv.x * cam_right + centered_uv.y * cam_up + camera_dir );
+    vec3 rd = ray_dir(90.0, vec2(1.0), uv);
+    vec3 ray_direction = rd.x * cam_right + rd.y * cam_up + rd.z * camera_dir;
+    // vec3 ray_direction = normalize(centered_uv.x * cam_right + centered_uv.y * cam_up + camera_dir );
     // vec3 ray_direction = normalize(camera_dir + ray_dir( 90.0, resolution.xy, gl_FragCoord.xy ));
 
 
@@ -211,7 +216,7 @@ void main(){
     }
     
 
-    float z_far = 1000.0;
+    float z_far = 100000000.0;
     float z_near = 0.1;
 
     float A = (z_far + z_near) / (z_far - z_near);
@@ -253,10 +258,13 @@ void main(){
     if(planet_has_ice_caps && polarness + height*0.1 > 1.0){
         ground_color = planet_ice_color;
     }
-
-    vec3 sun_direction = normalize(sun_position - body_origin);
+   
+    float diffuse = 0;
+    for(int i = 0; i < 8; i++){
+        vec3 sun_direction = normalize(light_positions[i] - body_origin);
+        diffuse += max(0.0, dot(sphere_normal, sun_direction) * max(0.1, dot(normal, sun_direction ))) * light_colors[i].w;
+    }
     
-    float diffuse = max(0.0, dot(sphere_normal, sun_direction) * max(0.1, dot(normal, sun_direction ))  );
    
     float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
 
@@ -268,5 +276,5 @@ void main(){
     }else{
         gl_FragColor = vec4(mix(diffuse * ground_color, planet_atmosphere_color, planet_has_atmosphere? 0.2 : 0), 1.0);
     }
-    // gl_FragColor = vec4(vec3(intersection_point), 1.0);
+    // gl_FragColor = vec4(rd_cam, 1.0);
 }

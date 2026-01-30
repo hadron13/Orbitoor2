@@ -14,6 +14,7 @@ import glm "core:math/linalg/glsl"
 
 vec2 :: [2]f32
 vec3 :: [3]f32
+vec4 :: [4]f32
 
 body :: struct{
     mass : f32,
@@ -35,6 +36,7 @@ celestial_body :: struct{
     rotation_speed : f32,
 
     temperature : f32,
+    luminosity : f32,
     primary_color : vec3, 
     secondary_color: vec3,
     
@@ -63,7 +65,37 @@ background_shader_uniforms : map[string]gl.Uniform_Info
 
 quad_vao : u32
 
-draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, sun_position: ^vec3){
+blackbody_radiation :: proc(T: f32, bComputeRadiance: bool) -> vec4{
+
+    ChromaRadiance := vec4{0.0, 0.0, 0.0, 0.0};
+    
+    // --- Effective radiance in W/(sr*m2) ---
+    if(bComputeRadiance){
+        ChromaRadiance.a = 230141698.067 / (math.exp(25724.2/T) - 1.0);
+    }
+    
+    // luminance Lv = Km*ChromaRadiance.a in cd/m2, where Km = 683.002 lm/W
+    
+    // --- Chromaticity in linear sRGB ---
+    // (i.e. color luminance Y = dot({r,g,b}, {0.2126, 0.7152, 0.0722}) = 1)
+    // --- R ---
+    u := 0.000536332*T
+    ChromaRadiance.r = 0.638749 + (u + 1.57533) / (u*u + 0.28664);
+    
+    // --- G ---
+    u = 0.0019639*T;
+    ChromaRadiance.g = 0.971029 + (u - 10.8015) / (u*u + 6.59002);
+    
+    // --- B ---
+    p := 0.00668406*T + 23.3962;
+    u = 0.000941064*T;
+    q := u*u + 0.00100641*T + 10.9068;
+    ChromaRadiance.b = 2.25398 - p/q;
+    
+    return ChromaRadiance;
+}
+
+draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, suns: []^celestial_body){
 
     uniforms : ^map[string]gl.Uniform_Info
 
@@ -91,9 +123,26 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
     gl.Uniform3fv(uniforms["body_color1"].location, 1, &body.primary_color[0])
     gl.Uniform3fv(uniforms["body_color2"].location, 1, &body.secondary_color[0])
     
-    gl.Uniform3fv(uniforms["sun_position"].location, 1, &sun_position[0])
+    // gl.Uniform3fv(uniforms["sun_position"].location, 1, &sun_position[0])
+    
+
 
     if(body.type == .ROCKY_PLANET){
+        light_positions : [8*3]f32
+        light_colors : [8*4]f32
+        for i := 0; i < 8; i+=1{
+            light_positions[3*i]     = (i < len(suns))? suns[i].physic_body.position.x: 0
+            light_positions[3*i + 1] = (i < len(suns))? suns[i].physic_body.position.y: 0
+            light_positions[3*i + 2] = (i < len(suns))? suns[i].physic_body.position.z: 0
+
+            light_colors[4*i]     = (i < len(suns))? suns[i].primary_color.x: 0
+            light_colors[4*i + 1] = (i < len(suns))? suns[i].primary_color.y: 0
+            light_colors[4*i + 2] = (i < len(suns))? suns[i].primary_color.z: 0
+            light_colors[4*i + 3] = (i < len(suns))? 1.0: 0
+        }
+        gl.Uniform3fv(gl.GetUniformLocation(planet_shader, "light_positions"), 8, &light_positions[0])
+        gl.Uniform4fv(gl.GetUniformLocation(planet_shader, "light_colors"), 8, &light_colors[0])
+
         //sea params
         gl.Uniform1i(uniforms["planet_has_sea"].location, i32(body.has_sea))
         if(body.has_sea){
@@ -235,15 +284,14 @@ main :: proc(){
             return
         }else{
             fmt.printfln("Shaders %s %s loaded", vertex_shader_paths[i], fragment_shader_paths[i])
-        }       
+        }
     }
     
+    for key, uniform in planet_shader_uniforms{
+        sdl3.Log("%s - %i", uniform.name, uniform.location)
+    }
 
-    VERTEX_SHADER_PATH :: "shaders/quad.vert.glsl"
-    FRAGMENT_SHADER_PATH :: "shaders/background.frag.glsl"
 
-    stat, err := os.stat(FRAGMENT_SHADER_PATH)
-    last_modification := stat.modification_time
 
     width, height : c.int
     sdl3.GetWindowSize(window, &width, &height)
@@ -320,7 +368,7 @@ main :: proc(){
         radius = 4.0,
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
-        primary_color = {0.957,0.933,0.659},
+        primary_color = blackbody_radiation(5000, false).xyz,
         temperature = 5000.0
     }
     solus := celestial_body{
@@ -334,10 +382,50 @@ main :: proc(){
         radius = 3.0,
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
-        primary_color = {0.5,0.933,0.959},
-        temperature = 5000.0
+        primary_color = blackbody_radiation(30000, false).xyz,
+        temperature = 30000.0
     }
 
+    chongus := celestial_body{
+        type = .STAR,
+        name = "Chongus",
+        physic_body = {
+            position = {0, 0, 14959787070.0},
+            velocity = {0, 0, 5.0},
+            mass = 10000000000.0
+        },
+        radius = 695508000.0,
+        rotation_axis = {0, 1.0, 0},
+        rotation_speed = 1.0, 
+        primary_color = blackbody_radiation(1800, false).xyz,
+        luminosity = 100.0,
+        temperature = 1800.0
+    }
+
+    moon := celestial_body{
+        type = .ROCKY_PLANET,
+        name = "Moon",
+        physic_body = {
+            position = {0, 0, 384400000.0},
+            velocity = {6.0, 0, 0},
+            mass = 1.0
+        },
+        radius = 1737500.0,
+        rotation_axis = {0, 1.0, 0},
+        rotation_speed = 0.05, 
+        primary_color = {0.4, 0.4, 0.4},
+        secondary_color = {0.776,0.69,0.239},
+        has_sea = false,  
+        has_atmosphere = false,  
+    }
+
+    suns := []^celestial_body{&sun, &solus, &chongus}
+
+    VERTEX_SHADER_PATH :: "shaders/quad.vert.glsl"
+    FRAGMENT_SHADER_PATH :: "shaders/star.frag.glsl"
+
+    stat, err := os.stat(FRAGMENT_SHADER_PATH)
+    last_modification := stat.modification_time
     
     loop:
     for{
@@ -391,8 +479,8 @@ main :: proc(){
         }
         
         if stat, err = os.stat(FRAGMENT_SHADER_PATH); time.diff(last_modification, stat.modification_time) != 0{
-            background_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
-            background_shader_uniforms = gl.get_uniforms_from_program(background_shader)
+            star_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
+            star_shader_uniforms = gl.get_uniforms_from_program(star_shader)
 
             if !ok {
                 a, b, c, d := gl.get_last_error_messages()
@@ -409,20 +497,24 @@ main :: proc(){
 
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-    
+   
+        gl.Disable(gl.DEPTH_TEST)
+
         gl.UseProgram(background_shader)
         gl.Uniform2f(background_shader_uniforms["resolution"].location, f32(width), f32(height))
         gl.Uniform3fv(background_shader_uniforms["camera_dir"].location, 1, &main_camera.front[0])
         gl.BindVertexArray(quad_vao)
         gl.DrawArrays(gl.TRIANGLES, 0, 6)
         
+        // gl.Enable(gl.DEPTH_TEST)
+        
 
         time := f32(sdl3.GetTicks())/1000.0;
 
 
+        // main_camera.position = earth.physic_body.position + vec3{0, 0, 2.0}
 
-
-        bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus}
+        bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
         sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int{
             return (glm.distance(a.physic_body.position, main_camera.position) > glm.distance(b.physic_body.position, main_camera.position))? -1 : 0;
         })
@@ -441,7 +533,7 @@ main :: proc(){
             }
             apply_velocity(&body.physic_body, 1.0/165.0)
 
-            draw_celestial_body(body, &main_camera, time, width, height, &sun.physic_body.position)
+            draw_celestial_body(body, &main_camera, time, width, height, suns)
         }
 
 
