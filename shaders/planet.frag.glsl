@@ -261,13 +261,14 @@ void main(){
    
     float diffuse = 0;
     for(int i = 0; i < 8; i++){
-        vec3 sun_direction = normalize(light_positions[i] - body_origin);
-        diffuse += max(0.0, dot(sphere_normal, sun_direction) * max(0.1, dot(normal, sun_direction ))) * light_colors[i].w;
-    }
-    
-   
-    float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
+        vec3 to_light = light_positions[i] - body_origin;
+        float distance = length(to_light);
+        float attenuation = 1.0 / (0.1 + 0.3 * distance + 0.3 * distance * distance);
 
+        vec3 light_direction = normalize(to_light); 
+        diffuse += max(0.0, dot(sphere_normal, light_direction) * max(0.1, dot(normal, light_direction))) * light_colors[i].w * attenuation;
+    }
+    float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
 
     float atm_factor = clamp(1.0 -exp(-atm_thickness * 0.4), 0, 1.0);
 

@@ -10,6 +10,7 @@ import "core:c"
 import "core:math"
 import "core:sort"
 import glm "core:math/linalg/glsl"
+import "vendor:cgltf"
 
 
 vec2 :: [2]f32
@@ -62,121 +63,12 @@ star_shader : u32
 star_shader_uniforms : map[string]gl.Uniform_Info
 background_shader : u32
 background_shader_uniforms : map[string]gl.Uniform_Info
+mesh_shader: u32
+mesh_shader_uniforms : map[string]gl.Uniform_Info
 
 quad_vao : u32
+ship_vao : u32
 
-blackbody_radiation :: proc(T: f32, bComputeRadiance: bool) -> vec4{
-
-    ChromaRadiance := vec4{0.0, 0.0, 0.0, 0.0};
-    
-    // --- Effective radiance in W/(sr*m2) ---
-    if(bComputeRadiance){
-        ChromaRadiance.a = 230141698.067 / (math.exp(25724.2/T) - 1.0);
-    }
-    
-    // luminance Lv = Km*ChromaRadiance.a in cd/m2, where Km = 683.002 lm/W
-    
-    // --- Chromaticity in linear sRGB ---
-    // (i.e. color luminance Y = dot({r,g,b}, {0.2126, 0.7152, 0.0722}) = 1)
-    // --- R ---
-    u := 0.000536332*T
-    ChromaRadiance.r = 0.638749 + (u + 1.57533) / (u*u + 0.28664);
-    
-    // --- G ---
-    u = 0.0019639*T;
-    ChromaRadiance.g = 0.971029 + (u - 10.8015) / (u*u + 6.59002);
-    
-    // --- B ---
-    p := 0.00668406*T + 23.3962;
-    u = 0.000941064*T;
-    q := u*u + 0.00100641*T + 10.9068;
-    ChromaRadiance.b = 2.25398 - p/q;
-    
-    return ChromaRadiance;
-}
-
-draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, suns: []^celestial_body){
-
-    uniforms : ^map[string]gl.Uniform_Info
-
-    #partial switch(body.type){
-        case .ROCKY_PLANET:
-            gl.UseProgram(planet_shader) 
-            uniforms = &planet_shader_uniforms
-        case .STAR:
-            gl.UseProgram(star_shader) 
-            uniforms = &star_shader_uniforms
-    }
-    
-    gl.Uniform2f(uniforms["resolution"].location, f32(width), f32(height))
-    gl.Uniform1f(uniforms["time"].location, time)
-    gl.Uniform3fv(uniforms["camera_pos"].location, 1, &camera.position[0])
-    gl.Uniform3fv(uniforms["camera_dir"].location, 1, &camera.front[0])
-   
-    //physical params
-    gl.Uniform3fv(uniforms["body_origin"].location, 1, &body.physic_body.position[0])
-    gl.Uniform1f(uniforms["body_radius"].location, body.radius)
-    gl.Uniform3fv(uniforms["body_axis"].location, 1, &body.rotation_axis[0])
-    gl.Uniform1f(uniforms["body_rotation_speed"].location, body.rotation_speed)
-   
-    //color params
-    gl.Uniform3fv(uniforms["body_color1"].location, 1, &body.primary_color[0])
-    gl.Uniform3fv(uniforms["body_color2"].location, 1, &body.secondary_color[0])
-    
-    // gl.Uniform3fv(uniforms["sun_position"].location, 1, &sun_position[0])
-    
-
-
-    if(body.type == .ROCKY_PLANET){
-        light_positions : [8*3]f32
-        light_colors : [8*4]f32
-        for i := 0; i < 8; i+=1{
-            light_positions[3*i]     = (i < len(suns))? suns[i].physic_body.position.x: 0
-            light_positions[3*i + 1] = (i < len(suns))? suns[i].physic_body.position.y: 0
-            light_positions[3*i + 2] = (i < len(suns))? suns[i].physic_body.position.z: 0
-
-            light_colors[4*i]     = (i < len(suns))? suns[i].primary_color.x: 0
-            light_colors[4*i + 1] = (i < len(suns))? suns[i].primary_color.y: 0
-            light_colors[4*i + 2] = (i < len(suns))? suns[i].primary_color.z: 0
-            light_colors[4*i + 3] = (i < len(suns))? 1.0: 0
-        }
-        gl.Uniform3fv(gl.GetUniformLocation(planet_shader, "light_positions"), 8, &light_positions[0])
-        gl.Uniform4fv(gl.GetUniformLocation(planet_shader, "light_colors"), 8, &light_colors[0])
-
-        //sea params
-        gl.Uniform1i(uniforms["planet_has_sea"].location, i32(body.has_sea))
-        if(body.has_sea){
-            gl.Uniform3fv(uniforms["planet_sea_color"].location, 1, &body.sea_color[0])
-        }
-       
-        //atmosphere params
-        gl.Uniform1i(uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
-        if(body.has_atmosphere){
-            gl.Uniform3fv(uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
-        }
-
-        //ice caps params
-        gl.Uniform1i(uniforms["planet_has_ice_caps"].location, i32(body.has_ice_caps))
-        if(body.has_ice_caps){
-            gl.Uniform3fv(uniforms["planet_ice_color"].location, 1, &body.ice_color[0])
-        }
-    }
-
-    gl.BindVertexArray(quad_vao)
-    gl.DrawArrays(gl.TRIANGLES, 0, 6)
-
-}
-G :: 0.01
-apply_gravity :: proc(body_a : ^body, body_b: ^body){
-    distance := glm.distance(body_a.position, body_b.position)
-    force := (G * body_a.mass * body_b.mass) / (distance * distance)
-    direction := glm.normalize(body_b.position - body_a.position)
-    body_a.velocity +=  direction * (force/body_a.mass)
-    body_b.velocity += -direction * (force/body_b.mass)
-}
-apply_velocity :: proc(body: ^body, delta_t: f32){
-    body.position += body.velocity * delta_t
-}
 
 
 camera :: struct{
@@ -268,10 +160,76 @@ main :: proc(){
     gl.BindVertexArray(0)
 
 
-    vertex_shader_paths := []string{"shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/quad.vert.glsl"}
-    fragment_shader_paths := []string{"shaders/planet.frag.glsl", "shaders/star.frag.glsl", "shaders/background.frag.glsl"} 
-    shader_uniforms := []^map[string]gl.Uniform_Info{&planet_shader_uniforms, &star_shader_uniforms, &background_shader_uniforms}
-    shader_programs := []^u32{&planet_shader, &star_shader, &background_shader}
+    options := cgltf.options{}
+    options.type = .glb
+    data, result := cgltf.parse_file(options, "bogolau.glb")
+
+    if(result != .success){
+        sdl3.Log("cgltf error")
+        return
+    }
+    result = cgltf.load_buffers(options, data, "bogolau.glb")
+    if(result != .success){
+        sdl3.Log("cgltf load error")
+        return
+    }
+
+
+    
+    ship_mesh := data.meshes[0]
+    ship_primitive := &ship_mesh.primitives[0]
+
+    position_accessor : ^cgltf.accessor
+
+    for attribute in ship_primitive.attributes{
+        if(attribute.type == .position){
+            position_accessor = attribute.data
+        }
+    }
+
+    index_accessor := ship_primitive.indices
+
+
+    ship_vbo, ship_ebo: u32
+    gl.GenVertexArrays(1, &ship_vao)
+    gl.GenBuffers(1, &ship_vbo)
+    gl.GenBuffers(1, &ship_ebo)
+   
+
+    gl.BindVertexArray(ship_vao)
+    gl.BindBuffer(gl.ARRAY_BUFFER, ship_vbo)
+    gl.BufferData(gl.ARRAY_BUFFER,
+                 int(position_accessor.count * position_accessor.stride),
+                 rawptr(uintptr(position_accessor.buffer_view.buffer.data) + 
+                        uintptr(position_accessor.offset + position_accessor.buffer_view.offset)),
+                 gl.STATIC_DRAW)
+
+    gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), uintptr(position_accessor.offset))
+    gl.EnableVertexAttribArray(0)
+    sdl3.Log("vbo done")
+
+    if(ship_primitive.indices == nil){
+        sdl3.Log("no indices!!")
+        return
+    }
+    sdl3.Log("%i vertices, %i indices", position_accessor.count, ship_primitive.indices.count)
+
+    gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ship_ebo)
+    gl.BufferData(gl.ELEMENT_ARRAY_BUFFER,
+                 int(index_accessor.count * index_accessor.stride),
+                 rawptr(uintptr(index_accessor.buffer_view.buffer.data) + 
+                        uintptr(index_accessor.offset + index_accessor.buffer_view.offset)),
+                 gl.STATIC_DRAW)
+    
+    sdl3.Log("ebo done")
+
+    gl.BindVertexArray(0);
+
+
+    vertex_shader_paths := []string{"shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/standard.vert.glsl"}
+    fragment_shader_paths := []string{"shaders/planet.frag.glsl", "shaders/star.frag.glsl", "shaders/background.frag.glsl", "shaders/mesh.frag.glsl"} 
+    shader_uniforms := []^map[string]gl.Uniform_Info{&planet_shader_uniforms, &star_shader_uniforms, &background_shader_uniforms, &mesh_shader_uniforms}
+    shader_programs := []^u32{&planet_shader, &star_shader, &background_shader, &mesh_shader}
 
     ok: bool
     for i := 0; i < len(shader_programs); i+=1{
@@ -287,11 +245,13 @@ main :: proc(){
         }
     }
     
-    for key, uniform in planet_shader_uniforms{
-        sdl3.Log("%s - %i", uniform.name, uniform.location)
-    }
+    // for key, uniform in planet_shader_uniforms{
+    //     sdl3.Log("%s - %i", uniform.name, uniform.location)
+    // }
 
 
+    
+    
 
     width, height : c.int
     sdl3.GetWindowSize(window, &width, &height)
@@ -369,7 +329,8 @@ main :: proc(){
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
         primary_color = blackbody_radiation(5000, false).xyz,
-        temperature = 5000.0
+        temperature = 5000.0,
+        luminosity = 500.0
     }
     solus := celestial_body{
         type = .STAR,
@@ -383,7 +344,8 @@ main :: proc(){
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
         primary_color = blackbody_radiation(30000, false).xyz,
-        temperature = 30000.0
+        temperature = 30000.0,
+        luminosity = 100.0
     }
 
     chongus := celestial_body{
@@ -398,7 +360,7 @@ main :: proc(){
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
         primary_color = blackbody_radiation(1800, false).xyz,
-        luminosity = 100.0,
+        luminosity = 100000.0,
         temperature = 1800.0
     }
 
@@ -537,17 +499,126 @@ main :: proc(){
         }
 
 
-        // gl.UniformMatrix4fv(uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
-        // gl.UniformMatrix4fv(uniforms["view"].location, 1, gl.FALSE, &view[0,0])
-        // gl.UniformMatrix4fv(uniforms["model"].location, 1, gl.FALSE, &model[0,0])
+        gl.UseProgram(mesh_shader)
+        gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
+        gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0,0])
+        gl.UniformMatrix4fv(mesh_shader_uniforms["model"].location, 1, gl.FALSE, &model[0,0])
+        gl.BindVertexArray(ship_vao)
+
+        gl.DrawElements(gl.TRIANGLES, i32(ship_primitive.indices.count), gl.UNSIGNED_SHORT, nil)
 
         sdl3.GL_SwapWindow(window)
     }
-
-
-
 }
 
 
+blackbody_radiation :: proc(T: f32, bComputeRadiance: bool) -> vec4{
 
+    ChromaRadiance := vec4{0.0, 0.0, 0.0, 0.0};
+    
+    // --- Effective radiance in W/(sr*m2) ---
+    if(bComputeRadiance){
+        ChromaRadiance.a = 230141698.067 / (math.exp(25724.2/T) - 1.0);
+    }
+    
+    // luminance Lv = Km*ChromaRadiance.a in cd/m2, where Km = 683.002 lm/W
+    
+    // --- Chromaticity in linear sRGB ---
+    // (i.e. color luminance Y = dot({r,g,b}, {0.2126, 0.7152, 0.0722}) = 1)
+    // --- R ---
+    u := 0.000536332*T
+    ChromaRadiance.r = 0.638749 + (u + 1.57533) / (u*u + 0.28664);
+    
+    // --- G ---
+    u = 0.0019639*T;
+    ChromaRadiance.g = 0.971029 + (u - 10.8015) / (u*u + 6.59002);
+    
+    // --- B ---
+    p := 0.00668406*T + 23.3962;
+    u = 0.000941064*T;
+    q := u*u + 0.00100641*T + 10.9068;
+    ChromaRadiance.b = 2.25398 - p/q;
+    
+    return ChromaRadiance;
+}
 
+draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, suns: []^celestial_body){
+
+    uniforms : ^map[string]gl.Uniform_Info
+
+    #partial switch(body.type){
+        case .ROCKY_PLANET:
+            gl.UseProgram(planet_shader) 
+            uniforms = &planet_shader_uniforms
+        case .STAR:
+            gl.UseProgram(star_shader) 
+            uniforms = &star_shader_uniforms
+    }
+    
+    gl.Uniform2f(uniforms["resolution"].location, f32(width), f32(height))
+    gl.Uniform1f(uniforms["time"].location, time)
+    gl.Uniform3fv(uniforms["camera_pos"].location, 1, &camera.position[0])
+    gl.Uniform3fv(uniforms["camera_dir"].location, 1, &camera.front[0])
+   
+    //physical params
+    gl.Uniform3fv(uniforms["body_origin"].location, 1, &body.physic_body.position[0])
+    gl.Uniform1f(uniforms["body_radius"].location, body.radius)
+    gl.Uniform3fv(uniforms["body_axis"].location, 1, &body.rotation_axis[0])
+    gl.Uniform1f(uniforms["body_rotation_speed"].location, body.rotation_speed)
+   
+    //color params
+    gl.Uniform3fv(uniforms["body_color1"].location, 1, &body.primary_color[0])
+    gl.Uniform3fv(uniforms["body_color2"].location, 1, &body.secondary_color[0])
+    
+    // gl.Uniform3fv(uniforms["sun_position"].location, 1, &sun_position[0])
+
+    if(body.type == .ROCKY_PLANET){
+        light_positions : [8*3]f32
+        light_colors : [8*4]f32
+        for i := 0; i < 8; i+=1{
+            light_positions[3*i]     = (i < len(suns))? suns[i].physic_body.position.x: 0
+            light_positions[3*i + 1] = (i < len(suns))? suns[i].physic_body.position.y: 0
+            light_positions[3*i + 2] = (i < len(suns))? suns[i].physic_body.position.z: 0
+
+            light_colors[4*i]     = (i < len(suns))? suns[i].primary_color.x: 0
+            light_colors[4*i + 1] = (i < len(suns))? suns[i].primary_color.y: 0
+            light_colors[4*i + 2] = (i < len(suns))? suns[i].primary_color.z: 0
+            light_colors[4*i + 3] = (i < len(suns))? suns[i].luminosity: 0
+        }
+        gl.Uniform3fv(gl.GetUniformLocation(planet_shader, "light_positions"), 8, &light_positions[0])
+        gl.Uniform4fv(gl.GetUniformLocation(planet_shader, "light_colors"), 8, &light_colors[0])
+
+        //sea params
+        gl.Uniform1i(uniforms["planet_has_sea"].location, i32(body.has_sea))
+        if(body.has_sea){
+            gl.Uniform3fv(uniforms["planet_sea_color"].location, 1, &body.sea_color[0])
+        }
+       
+        //atmosphere params
+        gl.Uniform1i(uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
+        if(body.has_atmosphere){
+            gl.Uniform3fv(uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
+        }
+
+        //ice caps params
+        gl.Uniform1i(uniforms["planet_has_ice_caps"].location, i32(body.has_ice_caps))
+        if(body.has_ice_caps){
+            gl.Uniform3fv(uniforms["planet_ice_color"].location, 1, &body.ice_color[0])
+        }
+    }
+
+    gl.BindVertexArray(quad_vao)
+    gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+}
+G :: 0.01
+apply_gravity :: proc(body_a : ^body, body_b: ^body){
+    distance := glm.distance(body_a.position, body_b.position)
+    force := (G * body_a.mass * body_b.mass) / (distance * distance)
+    direction := glm.normalize(body_b.position - body_a.position)
+    body_a.velocity +=  direction * (force/body_a.mass)
+    body_b.velocity += -direction * (force/body_b.mass)
+}
+apply_velocity :: proc(body: ^body, delta_t: f32){
+    body.position += body.velocity * delta_t
+}
