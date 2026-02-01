@@ -48,7 +48,7 @@ void main(){
 
     vec2 inner_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius * 0.9f);
     vec2 outer_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius);
-    
+
     if(outer_intersection.y < 0.0){
         discard;
     }

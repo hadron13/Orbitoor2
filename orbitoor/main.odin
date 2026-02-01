@@ -11,6 +11,7 @@ import "core:math"
 import "core:sort"
 import glm "core:math/linalg/glsl"
 import "vendor:cgltf"
+import stbi "vendor:stb/image"
 
 
 vec2 :: [2]f32
@@ -68,6 +69,8 @@ mesh_shader_uniforms : map[string]gl.Uniform_Info
 
 quad_vao : u32
 ship_vao : u32
+
+skybox_tex_id : u32
 
 
 
@@ -131,6 +134,35 @@ main :: proc(){
     gl.DepthFunc(gl.LESS)
     gl.Enable(gl.BLEND)
     gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    gl.Enable(gl.CULL_FACE)
+    gl.CullFace(gl.FRONT)
+
+
+    gl.GenTextures(1, &skybox_tex_id)
+    gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
+    
+    skybox_filenames :[]cstring={
+        "textures/skybox/px.png",
+        "textures/skybox/nx.png",
+        "textures/skybox/py.png",
+        "textures/skybox/ny.png",
+        "textures/skybox/pz.png",
+        "textures/skybox/nz.png"
+    }
+
+    for i := 0; i < 6; i += 1{
+        width, height, channels: c.int
+        img_data := stbi.load(skybox_filenames[i], &width, &height, &channels, 0)
+        gl.TexImage2D(
+            u32(gl.TEXTURE_CUBE_MAP_POSITIVE_X + i), 
+            0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
+        );
+    }
+    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
 
 
     quad : []f32 = {
@@ -162,13 +194,13 @@ main :: proc(){
 
     options := cgltf.options{}
     options.type = .glb
-    data, result := cgltf.parse_file(options, "bogolau.glb")
+    data, result := cgltf.parse_file(options, "macaco.glb")
 
     if(result != .success){
         sdl3.Log("cgltf error")
         return
     }
-    result = cgltf.load_buffers(options, data, "bogolau.glb")
+    result = cgltf.load_buffers(options, data, "macaco.glb")
     if(result != .success){
         sdl3.Log("cgltf load error")
         return
@@ -179,15 +211,21 @@ main :: proc(){
     ship_mesh := data.meshes[0]
     ship_primitive := &ship_mesh.primitives[0]
 
-    position_accessor : ^cgltf.accessor
+    index_accessor := ship_primitive.indices
+    position_accessor, normal_accessor : ^cgltf.accessor
 
     for attribute in ship_primitive.attributes{
+        sdl3.Log("attr - %s", attribute.name)
+
         if(attribute.type == .position){
             position_accessor = attribute.data
         }
+        if(attribute.type == .normal){
+            normal_accessor = attribute.data
+        
+        }
     }
 
-    index_accessor := ship_primitive.indices
 
 
     ship_vbo, ship_ebo: u32
@@ -195,17 +233,37 @@ main :: proc(){
     gl.GenBuffers(1, &ship_vbo)
     gl.GenBuffers(1, &ship_ebo)
    
+    if(position_accessor.buffer_view == normal_accessor.buffer_view){
+        sdl3.Log("interleaved")
+    }
 
+    // sdl3.Log("normal stride %i", normal_accessor.stride)
+    // sdl3.Log("normal offset %i", normal_accessor.offset)
+    // sdl3.Log("normal buffer view stride %i", normal_accessor.buffer_view.stride)
+    // sdl3.Log("normal buffer view offset %i", normal_accessor.buffer_view.offset)
+    // sdl3.Log("position stride %i", position_accessor.stride)
+    // sdl3.Log("position offset %i", position_accessor.offset)
+    // sdl3.Log("position buffer view size %i", position_accessor.buffer_view.size)
+    // sdl3.Log("position buffer view stride %i", position_accessor.buffer_view.stride)
+    // sdl3.Log("position buffer view offset %i", position_accessor.buffer_view.offset)
+
+        
+    
     gl.BindVertexArray(ship_vao)
     gl.BindBuffer(gl.ARRAY_BUFFER, ship_vbo)
-    gl.BufferData(gl.ARRAY_BUFFER,
-                 int(position_accessor.count * position_accessor.stride),
-                 rawptr(uintptr(position_accessor.buffer_view.buffer.data) + 
-                        uintptr(position_accessor.offset + position_accessor.buffer_view.offset)),
-                 gl.STATIC_DRAW)
+    gl.BufferData(gl.ARRAY_BUFFER, int(position_accessor.buffer_view.size + normal_accessor.buffer_view.size), nil, gl.STATIC_DRAW)
+    gl.BufferSubData(gl.ARRAY_BUFFER, 0, int(position_accessor.buffer_view.size),
+                 rawptr(uintptr(position_accessor.buffer_view.buffer.data) + uintptr(position_accessor.offset + position_accessor.buffer_view.offset)))
+    
+    gl.BufferSubData(gl.ARRAY_BUFFER, int(normal_accessor.buffer_view.offset), int(normal_accessor.buffer_view.size),
+                 rawptr(uintptr(normal_accessor.buffer_view.buffer.data) + uintptr(normal_accessor.offset + normal_accessor.buffer_view.offset)))
 
-    gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), uintptr(position_accessor.offset))
+
+    gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), 0)
     gl.EnableVertexAttribArray(0)
+    gl.VertexAttribPointer(1, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), uintptr(normal_accessor.offset))
+    gl.EnableVertexAttribArray(1)
+
     sdl3.Log("vbo done")
 
     if(ship_primitive.indices == nil){
@@ -249,9 +307,6 @@ main :: proc(){
     //     sdl3.Log("%s - %i", uniform.name, uniform.location)
     // }
 
-
-    
-    
 
     width, height : c.int
     sdl3.GetWindowSize(window, &width, &height)
@@ -454,8 +509,9 @@ main :: proc(){
         }
         
         model := glm.identity(glm.mat4)
+        model *= glm.mat4Translate(vec3{0, 5.0, 0})
         view := camera_update(&main_camera, 1.5)
-        projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.01)
+        projection := glm.mat4Perspective(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1, 1000.0)
 
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -463,12 +519,18 @@ main :: proc(){
         gl.Disable(gl.DEPTH_TEST)
 
         gl.UseProgram(background_shader)
+        
         gl.Uniform2f(background_shader_uniforms["resolution"].location, f32(width), f32(height))
         gl.Uniform3fv(background_shader_uniforms["camera_dir"].location, 1, &main_camera.front[0])
+        gl.Uniform1i(background_shader_uniforms["skybox"].location, 0)
+        
         gl.BindVertexArray(quad_vao)
+        gl.ActiveTexture(gl.TEXTURE0)
+        gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
+
         gl.DrawArrays(gl.TRIANGLES, 0, 6)
         
-        // gl.Enable(gl.DEPTH_TEST)
+        gl.Enable(gl.DEPTH_TEST)
         
 
         time := f32(sdl3.GetTicks())/1000.0;
@@ -499,13 +561,20 @@ main :: proc(){
         }
 
 
+        gl.Enable(gl.DEPTH_TEST)
+        gl.CullFace(gl.BACK)
         gl.UseProgram(mesh_shader)
         gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
         gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0,0])
         gl.UniformMatrix4fv(mesh_shader_uniforms["model"].location, 1, gl.FALSE, &model[0,0])
+        gl.Uniform1i(mesh_shader_uniforms["skybox"].location, 0)
+        gl.Uniform3fv(mesh_shader_uniforms["camera_pos"].location, 1, &main_camera.position[0])
         gl.BindVertexArray(ship_vao)
+        gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
 
         gl.DrawElements(gl.TRIANGLES, i32(ship_primitive.indices.count), gl.UNSIGNED_SHORT, nil)
+
+        gl.CullFace(gl.FRONT)
 
         sdl3.GL_SwapWindow(window)
     }
