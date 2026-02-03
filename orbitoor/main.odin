@@ -43,7 +43,7 @@ celestial_body :: struct{
     secondary_color: vec3,
     
     has_atmosphere : bool,
-    atmosphere_height : f32,
+    atmosphere_radius: f32,
     atmospheric_density : f32,
     rayleigh_coefficient : vec3,
     mie_coefficient: vec3, 
@@ -293,87 +293,6 @@ main :: proc(){
     gl.BindVertexArray(0)
 
 
-    // options := cgltf.options{}
-    // data, result := cgltf.parse_file(options, "macaco.glb")
-    //
-    // if(result != .success){
-    //     sdl3.Log("cgltf error")
-    //     return
-    // }
-    // result = cgltf.load_buffers(options, data, "macaco.glb")
-    // if(result != .success){
-    //     sdl3.Log("cgltf load error")
-    //     return
-    // }
-    //
-
-    
-   //  ship_mesh := data.meshes[0]
-   //  ship_primitive := &ship_mesh.primitives[0]
-   //
-   //  index_accessor := ship_primitive.indices
-   //  position_accessor, normal_accessor : ^cgltf.accessor
-   //
-   //  for attribute in ship_primitive.attributes{
-   //      sdl3.Log("attr - %s", attribute.name)
-   //
-   //      if(attribute.type == .position){
-   //          position_accessor = attribute.data
-   //      }
-   //      if(attribute.type == .normal){
-   //          normal_accessor = attribute.data
-   //      
-   //      }
-   //  }
-   //
-   //
-   //
-   //  ship_vbo, ship_ebo: u32
-   //  gl.GenVertexArrays(1, &ship_vao)
-   //  gl.GenBuffers(1, &ship_vbo)
-   //  gl.GenBuffers(1, &ship_ebo)
-   // 
-   //  if(position_accessor.buffer_view == normal_accessor.buffer_view){
-   //      sdl3.Log("interleaved")
-   //  }
-   //
-   //  
-   //  gl.BindVertexArray(ship_vao)
-   //  gl.BindBuffer(gl.ARRAY_BUFFER, ship_vbo)
-   //  gl.BufferData(gl.ARRAY_BUFFER, int(position_accessor.buffer_view.size + normal_accessor.buffer_view.size), nil, gl.STATIC_DRAW)
-   //  gl.BufferSubData(gl.ARRAY_BUFFER, 0, int(position_accessor.buffer_view.size),
-   //               rawptr(uintptr(position_accessor.buffer_view.buffer.data) + uintptr(position_accessor.offset + position_accessor.buffer_view.offset)))
-   //  
-   //  gl.BufferSubData(gl.ARRAY_BUFFER, int(normal_accessor.buffer_view.offset), int(normal_accessor.buffer_view.size),
-   //               rawptr(uintptr(normal_accessor.buffer_view.buffer.data) + uintptr(normal_accessor.offset + normal_accessor.buffer_view.offset)))
-   //
-   //
-   //  gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), 0)
-   //  gl.EnableVertexAttribArray(0)
-   //  gl.VertexAttribPointer(1, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), uintptr(normal_accessor.offset))
-   //  gl.EnableVertexAttribArray(1)
-   //
-   //  sdl3.Log("vbo done")
-   //
-   //  if(ship_primitive.indices == nil){
-   //      sdl3.Log("no indices!!")
-   //      return
-   //  }
-   //  sdl3.Log("%i vertices, %i indices", position_accessor.count, ship_primitive.indices.count)
-   //
-   //  gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ship_ebo)
-   //  gl.BufferData(gl.ELEMENT_ARRAY_BUFFER,
-   //               int(index_accessor.count * index_accessor.stride),
-   //               rawptr(uintptr(index_accessor.buffer_view.buffer.data) + 
-   //                      uintptr(index_accessor.offset + index_accessor.buffer_view.offset)),
-   //               gl.STATIC_DRAW)
-   //  
-   //  sdl3.Log("ebo done")
-   //
-   //  gl.BindVertexArray(0);
-
-
-
 
 
     vertex_shader_paths := []string{"shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/standard.vert.glsl"}
@@ -425,6 +344,7 @@ main :: proc(){
         has_sea = true,
         sea_color = {0, 0, 0.8},
         has_atmosphere = true,  
+        atmosphere_radius = 1.5, 
         rayleigh_coefficient = {0, 0, 0.8}, 
         has_ice_caps = true,
         ice_color = {0.9, 0.9, 0.9}
@@ -446,6 +366,7 @@ main :: proc(){
         has_sea = false,
         sea_color = {0, 0, 0.8},
         has_atmosphere = true,  
+        atmosphere_radius = 1.0, 
         rayleigh_coefficient = {0.8, 0, 0}, 
         has_ice_caps = true,
         ice_color = {0.9, 0.9, 0.9}
@@ -770,6 +691,7 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
         //atmosphere params
         gl.Uniform1i(uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
         if(body.has_atmosphere){
+            gl.Uniform1f(uniforms["planet_atmosphere_radius"].location, body.atmosphere_radius)
             gl.Uniform3fv(uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
         }
 
