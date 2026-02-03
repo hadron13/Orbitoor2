@@ -105,19 +105,6 @@ float snoise(vec3 v)
   }
 
 
-
-
-
-vec2 sphIntersect( in vec3 ro, in vec3 rd, in vec3 ce, float ra ){
-    vec3 oc = ro - ce;
-    float b = dot( oc, rd );
-    float c = dot( oc, oc ) - ra*ra;
-    float h = b*b - c;
-    if( h<0.0 ) return vec2(-1.0); // no intersection
-    h = sqrt( h );
-    return vec2( -b-h, -b+h );
-}
-
 float ridged(vec3 p, int octaves){
     float value = 0; 
     float frequency = 1.0f;
@@ -145,6 +132,20 @@ mat3 rotation_mat(vec3 axis, float angle) {
     oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,  
     oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c   
     );
+}
+
+
+
+
+
+vec2 sphIntersect( in vec3 ro, in vec3 rd, in vec3 ce, float ra ){
+    vec3 oc = ro - ce;
+    float b = dot( oc, rd );
+    float c = dot( oc, oc ) - ra*ra;
+    float h = b*b - c;
+    if( h<0.0 ) return vec2(-1.0); // no intersection
+    h = sqrt( h );
+    return vec2( -b-h, -b+h );
 }
 
 
@@ -185,6 +186,131 @@ uniform bool planet_has_ice_caps;
 uniform vec3 planet_ice_color;
 
 
+// Written by GLtracy
+// math const
+const float PI = 3.14159265359;
+const float MAX = 10000.0;
+
+// ray intersects sphere
+// e = -b +/- sqrt( b^2 - c )
+vec2 ray_vs_sphere( vec3 p, vec3 dir, float r ) {
+	float b = dot( p, dir );
+	float c = dot( p, p ) - r * r;
+	
+	float d = b * b - c;
+	if ( d < 0.0 ) {
+		return vec2( MAX, -MAX );
+	}
+	d = sqrt( d );
+	
+	return vec2( -b - d, -b + d );
+}
+
+// Mie
+// g : ( -0.75, -0.999 )
+//      3 * ( 1 - g^2 )               1 + c^2
+// F = ----------------- * -------------------------------
+//      8pi * ( 2 + g^2 )     ( 1 + g^2 - 2 * g * c )^(3/2)
+float phase_mie( float g, float c, float cc ) {
+	float gg = g * g;
+	
+	float a = ( 1.0 - gg ) * ( 1.0 + cc );
+
+	float b = 1.0 + gg - 2.0 * g * c;
+	b *= sqrt( b );
+	b *= 2.0 + gg;	
+	
+	return ( 3.0 / 8.0 / PI ) * a / b;
+}
+
+// Rayleigh
+// g : 0
+// F = 3/16PI * ( 1 + c^2 )
+float phase_ray( float cc ) {
+	return ( 3.0 / 16.0 / PI ) * ( 1.0 + cc );
+}
+
+// scatter const
+const float R_INNER = 1.0;
+const float R = R_INNER + 0.5;
+
+const int NUM_OUT_SCATTER = 8;
+const int NUM_IN_SCATTER = 80;
+
+float density( vec3 p, float ph ) {
+	return exp( -max( length( p ) - R_INNER, 0.0 ) / ph );
+}
+
+float optic( vec3 p, vec3 q, float ph ) {
+	vec3 s = ( q - p ) / float( NUM_OUT_SCATTER );
+	vec3 v = p + s * 0.5;
+	
+	float sum = 0.0;
+	for ( int i = 0; i < NUM_OUT_SCATTER; i++ ) {
+		sum += density( v, ph );
+		v += s;
+	}
+	sum *= length( s );
+	
+	return sum;
+}
+
+vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l ) {
+	const float ph_ray = 0.05;
+    const float ph_mie = 0.02;
+    
+    const vec3 k_ray = vec3( 3.8, 13.5, 33.1 );
+    const vec3 k_mie = vec3( 21.0 );
+    const float k_mie_ex = 1.1;
+    
+	vec3 sum_ray = vec3( 0.0 );
+    vec3 sum_mie = vec3( 0.0 );
+    
+    float n_ray0 = 0.0;
+    float n_mie0 = 0.0;
+    
+	float len = ( e.y - e.x ) / float( NUM_IN_SCATTER );
+    vec3 s = dir * len;
+	vec3 v = o + dir * ( e.x + len * 0.5 );
+    
+    for ( int i = 0; i < NUM_IN_SCATTER; i++, v += s ) {   
+		float d_ray = density( v, ph_ray ) * len;
+        float d_mie = density( v, ph_mie ) * len;
+        
+        n_ray0 += d_ray;
+        n_mie0 += d_mie;
+        
+#if 0
+        vec2 e = ( v, l, R_INNER );
+        e.x = max( e.x, 0.0 );
+        if ( e.x < e.y ) {
+           continue;
+        }
+#endif
+        
+        vec2 f = ray_vs_sphere( v, l, R );
+		vec3 u = v + l * f.y;
+        
+        float n_ray1 = optic( v, u, ph_ray );
+        float n_mie1 = optic( v, u, ph_mie );
+		
+        vec3 att = exp( - ( n_ray0 + n_ray1 ) * k_ray - ( n_mie0 + n_mie1 ) * k_mie * k_mie_ex );
+        
+		sum_ray += d_ray * att;
+        sum_mie += d_mie * att;
+	}
+	
+	float c  = dot( dir, -l );
+	float cc = c * c;
+    vec3 scatter =
+        sum_ray * k_ray * phase_ray( cc ) +
+     	sum_mie * k_mie * phase_mie( -0.78, c, cc );
+    
+	
+	return 10.0 * scatter;
+}
+
+
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
     vec2 centered_uv = (uv - 0.5)*2;
@@ -204,7 +330,7 @@ void main(){
     vec2 closest_intersection = ground_intersection;
 
     if(planet_has_atmosphere){
-        atm_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius * 1.1f);
+        atm_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius * 1.5f);
         closest_intersection = atm_intersection; 
         if(atm_intersection.y < 0.0){
             discard;
@@ -225,10 +351,10 @@ void main(){
     float depth = A + 1/closest_intersection.x * B;
     gl_FragDepth = depth;
 
-    int octaves = 6 - clamp(int(sqrt(closest_intersection.x)), 0, 3);
+    int octaves = 6 - clamp(int(sqrt(closest_intersection.x/body_radius)), 0, 3);
 
 
-    vec3 intersection_point = ray_origin + ray_direction * ground_intersection.x - body_origin; 
+    vec3 intersection_point = normalize(ray_origin + ray_direction * ground_intersection.x - body_origin); 
 
     vec3 sphere_normal = normalize(intersection_point); 
     vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
@@ -263,19 +389,28 @@ void main(){
     for(int i = 0; i < 8; i++){
         vec3 to_light = light_positions[i] - body_origin;
         float distance = length(to_light);
-        float attenuation = 1.0 / (0.1 + 0.3 * distance + 0.3 * distance * distance);
+        float attenuation = 1.0 / (0.1 + 0.01 * distance + 0.005 * distance * distance);
 
         vec3 light_direction = normalize(to_light); 
         diffuse += max(0.0, dot(sphere_normal, light_direction) * max(0.1, dot(normal, light_direction))) * light_colors[i].w * attenuation;
     }
-    float atm_thickness = atm_intersection.y - atm_intersection.x - (ground_intersection.y - ground_intersection.x); 
 
-    float atm_factor = clamp(1.0 -exp(-atm_thickness * 0.4), 0, 1.0);
 
-    if(ground_intersection.y < 0.0){ 
-        gl_FragColor = vec4(mix(vec3(0), planet_atmosphere_color, atm_factor), 0.5);
-    }else{
-        gl_FragColor = vec4(mix(diffuse * ground_color, planet_atmosphere_color, planet_has_atmosphere? 0.2 : 0), 1.0);
-    }
-    // gl_FragColor = vec4(rd_cam, 1.0);
+    vec3 light_dir = normalize(light_positions[0] - body_origin);
+
+	vec2 e = ray_vs_sphere( ray_origin - body_origin, ray_direction, body_radius );
+	// if ( e.x > e.y ) {
+	// 	gl_FragColor = vec4( 0.0 );
+ //        return;
+	// }
+	
+	vec2 f = ray_vs_sphere( ray_origin - body_origin, ray_direction, body_radius * 1.5f);
+	e.y = min( e.y, f.x );
+    vec3 scatter = in_scatter(ray_origin - body_origin, ray_direction, ground_intersection,  light_dir);
+    // if(ground_intersection.y < 0.0){ 
+    //     gl_FragColor = vec4(scatter, 1.0);
+    // }else{
+    //     gl_FragColor = vec4(mix(diffuse * ground_color, scatter, 0.5), 1.0);
+    // }
+    gl_FragColor = vec4(scatter, 1.0);
 }

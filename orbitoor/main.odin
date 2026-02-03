@@ -413,13 +413,13 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Earth",
         physic_body = {
-            position = {0, 0, 40},
-            velocity = {4.0, 0, 0},
-            mass = 2.0
+            position = {150, 0, 0},
+            velocity = {0.0, 0, 0},
+            mass = 5
         },
         radius = 1.0,
         rotation_axis = {0, 1.0, 0},
-        rotation_speed = 1.0, 
+        rotation_speed = 0.01, 
         primary_color = {0.1, 0.6, 0.2},
         secondary_color = {0.776,0.69,0.239},
         has_sea = true,
@@ -503,15 +503,15 @@ main :: proc(){
         type = .STAR,
         name = "Chongus",
         physic_body = {
-            position = {0, 0, 14959787070.0},
+            position = {0, 0, 149597870.0},
             velocity = {0, 0, 5.0},
             mass = 10000000000.0
         },
-        radius = 695508000.0,
+        radius = 695508.0,
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
         primary_color = blackbody_radiation(1800, false).xyz,
-        luminosity = 100000.0,
+        luminosity = 2e14,
         temperature = 1800.0
     }
 
@@ -532,16 +532,34 @@ main :: proc(){
         has_atmosphere = false,  
     }
 
-    suns := []^celestial_body{&sun, &solus, &chongus}
+    suns := []^celestial_body{&chongus}
 
     VERTEX_SHADER_PATH :: "shaders/quad.vert.glsl"
-    FRAGMENT_SHADER_PATH :: "shaders/star.frag.glsl"
+    FRAGMENT_SHADER_PATH :: "shaders/planet.frag.glsl"
 
     stat, err := os.stat(FRAGMENT_SHADER_PATH)
     last_modification := stat.modification_time
-    
+   
+    last_frame_time, current_frame_time: u64 = sdl3.GetPerformanceCounter(), sdl3.GetPerformanceCounter()
+
+    fps_log_timer : f64= 0
+    fps_counter : u32 = 0
+
     loop:
     for{
+
+        current_frame_time := sdl3.GetPerformanceCounter() 
+        delta_t := f64(current_frame_time - last_frame_time)/f64(sdl3.GetPerformanceFrequency())
+        last_frame_time = current_frame_time 
+
+        fps_log_timer += delta_t
+        fps_counter += 1
+        if(fps_log_timer > 1.0){
+            sdl3.Log("FPS: %i", fps_counter)
+            fps_counter = 0
+            fps_log_timer = 0
+        }
+
         event : sdl3.Event
         for sdl3.PollEvent(&event){
             #partial switch(event.type){
@@ -567,10 +585,10 @@ main :: proc(){
                     }
                 case .KEY_DOWN:
                     switch(event.key.key){
-                    case sdl3.K_W: main_camera.velocity.z = -0.1
-                    case sdl3.K_A: main_camera.velocity.x = -0.1
-                    case sdl3.K_S: main_camera.velocity.z = 0.1
-                    case sdl3.K_D: main_camera.velocity.x = 0.1
+                    case sdl3.K_W: main_camera.velocity.z = -0.3
+                    case sdl3.K_A: main_camera.velocity.x = -0.3
+                    case sdl3.K_S: main_camera.velocity.z = 0.3
+                    case sdl3.K_D: main_camera.velocity.x = 0.3
 
                     case sdl3.K_SPACE: main_camera.velocity.y = 0.1
                     case sdl3.K_C: main_camera.velocity.y =    -0.1
@@ -592,8 +610,8 @@ main :: proc(){
         }
         
         if stat, err = os.stat(FRAGMENT_SHADER_PATH); time.diff(last_modification, stat.modification_time) != 0{
-            star_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
-            star_shader_uniforms = gl.get_uniforms_from_program(star_shader)
+            planet_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
+            planet_shader_uniforms = gl.get_uniforms_from_program(planet_shader)
 
             if !ok {
                 a, b, c, d := gl.get_last_error_messages()
@@ -606,7 +624,7 @@ main :: proc(){
         
         model := glm.identity(glm.mat4)
         model *= glm.mat4Translate(vec3{0, 5.0, 0})
-        view := camera_update(&main_camera, 1.5)
+        view := camera_update(&main_camera, f32(delta_t) * 165) 
         projection := glm.mat4Perspective(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1, 1000.0)
 
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
@@ -626,7 +644,7 @@ main :: proc(){
 
         gl.DrawArrays(gl.TRIANGLES, 0, 6)
         
-        gl.Enable(gl.DEPTH_TEST)
+        // gl.Enable(gl.DEPTH_TEST)
         
 
         time := f32(sdl3.GetTicks())/1000.0;
