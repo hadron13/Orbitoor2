@@ -237,7 +237,7 @@ const int NUM_OUT_SCATTER = 8;
 const int NUM_IN_SCATTER = 32;
 
 float density( vec3 p, float ph ) {
-	return exp( -max( length( p ) - body_radius, 0.0 ) / ph );
+	return exp( -max( length( p ) - 1.0, 0.0 ) / ph );
 }
 
 float optic( vec3 p, vec3 q, float ph ) {
@@ -398,11 +398,11 @@ void main(){
     vec3 light_dir = normalize(light_positions[0] - body_origin);
 
 
-    vec3 scatter = in_scatter(ray_origin - body_origin, ray_direction, closest_intersection,  light_dir, planet_atmosphere_radius);
+    vec3 scatter = in_scatter((ray_origin - body_origin)/body_radius, ray_direction, atm_intersection/body_radius,  light_dir, (planet_atmosphere_radius/body_radius));
     scatter = 1.0 - exp(-scatter);
 
     if(ground_intersection.y < 0.0){ 
-        gl_FragColor = vec4(scatter, 0.5);
+        gl_FragColor = vec4(scatter, min(1.0, length(scatter)));
     }else{
         gl_FragColor = vec4(mix(diffuse * ground_color, scatter, length(scatter)), 1.0);
     }

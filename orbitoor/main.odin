@@ -223,7 +223,7 @@ main :: proc(){
     gl_context := sdl3.GL_CreateContext(window)
     defer sdl3.GL_DestroyContext(gl_context)
 
-    sdl3.GL_SetSwapInterval(-1)
+    sdl3.GL_SetSwapInterval(0)
    
     gl.load_up_to(3, 3, sdl3.gl_set_proc_address)
 
@@ -332,11 +332,11 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Earth",
         physic_body = {
-            position = {150, 0, 0},
+            position = {15000, 0, 0},
             velocity = {0.0, 0, 0},
             mass = 5
         },
-        radius = 1.0,
+        radius = 200,
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 0.01, 
         primary_color = {0.1, 0.6, 0.2},
@@ -344,7 +344,7 @@ main :: proc(){
         has_sea = true,
         sea_color = {0, 0, 0.8},
         has_atmosphere = true,  
-        atmosphere_radius = 1.5, 
+        atmosphere_radius = 300, 
         rayleigh_coefficient = {0, 0, 0.8}, 
         has_ice_caps = true,
         ice_color = {0.9, 0.9, 0.9}
@@ -519,7 +519,7 @@ main :: proc(){
                 case .MOUSE_MOTION:
                     if(sdl3.GetWindowRelativeMouseMode(window)){
                         main_camera.yaw   += cast(f32)event.motion.xrel * 0.2
-                        main_camera.pitch -= cast(f32)event.motion.yrel * 0.2
+                        // main_camera.pitch -= cast(f32)event.motion.yrel * 0.2
                         main_camera.pitch = math.clamp(main_camera.pitch, -89.9, 89.9)
                     }
 
@@ -543,11 +543,14 @@ main :: proc(){
             last_modification = stat.modification_time
         }
         
+        
         model := glm.identity(glm.mat4)
         model *= glm.mat4Translate(vec3{0, 5.0, 0})
         view := camera_update(&main_camera, f32(delta_t) * 165) 
         projection := glm.mat4Perspective(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1, 1000.0)
 
+        main_camera.position = earth.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*900, 0, -math.sin( math.to_radians(main_camera.yaw) )*900}
+        
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
    
@@ -570,8 +573,6 @@ main :: proc(){
 
         time := f32(sdl3.GetTicks())/1000.0;
 
-
-        // main_camera.position = earth.physic_body.position + vec3{0, 0, 2.0}
 
         bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
         sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int{
