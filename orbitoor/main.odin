@@ -332,13 +332,13 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Earth",
         physic_body = {
-            position = {15000, 0, 0},
+            position = {600, 0, 0},
             velocity = {0.0, 0, 0},
-            mass = 5
+            mass = 2000
         },
         radius = 200,
         rotation_axis = {0, 1.0, 0},
-        rotation_speed = 0.01, 
+        rotation_speed = 0.03, 
         primary_color = {0.1, 0.6, 0.2},
         secondary_color = {0.776,0.69,0.239},
         has_sea = true,
@@ -468,6 +468,18 @@ main :: proc(){
 
     loop:
     for{
+        if stat, err = os.stat(FRAGMENT_SHADER_PATH); time.diff(last_modification, stat.modification_time) != 0{
+            planet_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
+            planet_shader_uniforms:= gl.get_uniforms_from_program(star_shader)
+
+            if !ok {
+                a, b, c, d := gl.get_last_error_messages()
+                fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
+            }else{
+                fmt.printfln("Shaders reloaded")
+            }
+            last_modification = stat.modification_time
+        }
 
         current_frame_time := sdl3.GetPerformanceCounter() 
         delta_t := f64(current_frame_time - last_frame_time)/f64(sdl3.GetPerformanceFrequency())
@@ -530,18 +542,7 @@ main :: proc(){
             }
         }
         
-        if stat, err = os.stat(FRAGMENT_SHADER_PATH); time.diff(last_modification, stat.modification_time) != 0{
-            planet_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
-            planet_shader_uniforms = gl.get_uniforms_from_program(planet_shader)
 
-            if !ok {
-                a, b, c, d := gl.get_last_error_messages()
-                fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
-            }else{
-                fmt.printfln("Shaders reloaded")
-            }
-            last_modification = stat.modification_time
-        }
         
         
         model := glm.identity(glm.mat4)
@@ -549,7 +550,8 @@ main :: proc(){
         view := camera_update(&main_camera, f32(delta_t) * 165) 
         projection := glm.mat4Perspective(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1, 1000.0)
 
-        main_camera.position = earth.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*900, 0, -math.sin( math.to_radians(main_camera.yaw) )*900}
+        main_camera.position = earth.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*500, 0, -math.sin( math.to_radians(main_camera.yaw) )*500}
+        // main_camera.position = mars.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*2, 0, -math.sin( math.to_radians(main_camera.yaw) )*2}
         
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)
         gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -588,10 +590,10 @@ main :: proc(){
 
             for other_body in &bodies{
                 if(other_body != body){
-                    apply_gravity(&body.physic_body, &other_body.physic_body)
+                    apply_gravity(&body.physic_body, &other_body.physic_body, f32(delta_t))
                 }
             }
-            apply_velocity(&body.physic_body, 1.0/165.0)
+            apply_velocity(&body.physic_body, f32(delta_t))
 
             draw_celestial_body(body, &main_camera, time, width, height, suns)
         }
@@ -707,13 +709,13 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
     gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
 }
-G :: 0.01
-apply_gravity :: proc(body_a : ^body, body_b: ^body){
+G :: 1.65
+apply_gravity :: proc(body_a : ^body, body_b: ^body, delta_t: f32){
     distance := glm.distance(body_a.position, body_b.position)
     force := (G * body_a.mass * body_b.mass) / (distance * distance)
     direction := glm.normalize(body_b.position - body_a.position)
-    body_a.velocity +=  direction * (force/body_a.mass)
-    body_b.velocity += -direction * (force/body_b.mass)
+    body_a.velocity +=  direction * (force/body_a.mass) * delta_t
+    body_b.velocity += -direction * (force/body_b.mass) * delta_t
 }
 apply_velocity :: proc(body: ^body, delta_t: f32){
     body.position += body.velocity * delta_t

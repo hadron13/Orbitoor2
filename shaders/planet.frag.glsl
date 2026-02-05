@@ -187,7 +187,9 @@ uniform bool planet_has_ice_caps;
 uniform vec3 planet_ice_color;
 
 
-// Written by GLtracy
+// Scattering written by GLtracy
+// link: https://www.shadertoy.com/view/lslXDr
+
 // math const
 const float PI = 3.14159265359;
 const float MAX = 10000.0;
@@ -232,12 +234,14 @@ float phase_ray( float cc ) {
 }
 
 // scatter const
+const float R_INNER = 1.0;
+const float R = R_INNER + 0.5;
 
-const int NUM_OUT_SCATTER = 8;
+const int NUM_OUT_SCATTER = 4;
 const int NUM_IN_SCATTER = 32;
 
 float density( vec3 p, float ph ) {
-	return exp( -max( length( p ) - 1.0, 0.0 ) / ph );
+	return exp( -max( (length( p ) - R_INNER) * 8.0, 0.0 ) / ph );
 }
 
 float optic( vec3 p, vec3 q, float ph ) {
@@ -254,7 +258,7 @@ float optic( vec3 p, vec3 q, float ph ) {
 	return sum;
 }
 
-vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l, float atm_radius ) {
+vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l ) {
 	const float ph_ray = 0.05;
     const float ph_mie = 0.02;
     
@@ -280,14 +284,14 @@ vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l, float atm_radius ) {
         n_mie0 += d_mie;
         
 #if 0
-        vec2 e = ( v, l, 1.0 );
+        vec2 e = ray_vs_sphere( v, l, R_INNER );
         e.x = max( e.x, 0.0 );
         if ( e.x < e.y ) {
            continue;
         }
 #endif
         
-        vec2 f = ray_vs_sphere( v, l,  atm_radius);
+        vec2 f = ray_vs_sphere( v, l, R );
 		vec3 u = v + l * f.y;
         
         float n_ray1 = optic( v, u, ph_ray );
@@ -308,7 +312,6 @@ vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l, float atm_radius ) {
 	
 	return 10.0 * scatter;
 }
-
 
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
@@ -394,16 +397,21 @@ void main(){
         diffuse += max(0.0, dot(sphere_normal, light_direction) * max(0.1, dot(normal, light_direction))) * light_colors[i].w * attenuation;
     }
 
-
     vec3 light_dir = normalize(light_positions[0] - body_origin);
 
+    vec3 eye = (ray_origin-body_origin)/body_radius;
 
-    vec3 scatter = in_scatter((ray_origin - body_origin)/body_radius, ray_direction, atm_intersection/body_radius,  light_dir, (planet_atmosphere_radius/body_radius));
+    vec2 e = ray_vs_sphere( eye, ray_direction, R );	
+	vec2 f = ray_vs_sphere( eye, ray_direction, R_INNER );
+	e.y = min( e.y, f.x );
+    vec3 scatter = in_scatter( eye, ray_direction, e, light_dir );
+
     scatter = 1.0 - exp(-scatter);
 
     if(ground_intersection.y < 0.0){ 
         gl_FragColor = vec4(scatter, min(1.0, length(scatter)));
     }else{
-        gl_FragColor = vec4(mix(diffuse * ground_color, scatter, length(scatter)), 1.0);
+        gl_FragColor = vec4(mix(diffuse * ground_color, scatter, 0.9), 1.0);
     }
+    // gl_FragColor = vec4(scatter, 1.0);
 }

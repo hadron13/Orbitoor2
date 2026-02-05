@@ -13,6 +13,9 @@ void main(){
 
     vec3 ray_direction = normalize(centered_uv.x * cam_right + centered_uv.y * cam_up + camera_dir );
 
-    gl_FragColor = texture(skybox, ray_direction) * vec4(vec3(0.1), 1.0);
-    // gl_FragColor = vec4(ray_direction, 1.0);
+    vec3 tex = texture(skybox, ray_direction).xyz;
+   
+    tex = 1.0 - exp(-0.1 * tex);
+
+    gl_FragColor =  vec4(tex, 1.0);
 }

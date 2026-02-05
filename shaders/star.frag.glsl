@@ -46,8 +46,8 @@ void main(){
     vec3 rd = ray_dir(90.0, vec2(1.0), uv);
     vec3 ray_direction = rd.x * cam_right + rd.y * cam_up + rd.z * camera_dir;
 
-    vec2 inner_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius * 0.9f);
-    vec2 outer_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius);
+    vec2 inner_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius);
+    vec2 outer_intersection = sphIntersect(ray_origin, ray_direction, body_origin, body_radius * 8.0);
 
     if(outer_intersection.y < 0.0){
         discard;
@@ -63,13 +63,18 @@ void main(){
     float depth = A + 1/outer_intersection.x * B;
     gl_FragDepth = depth;
 
-    float inner_thickness = (inner_intersection.y - inner_intersection.x)/body_radius;
-    float atmospheric_thickness = (outer_intersection.y - outer_intersection.x)/body_radius;
+    // float inner_thickness = (inner_intersection.y - inner_intersection.x)/1.0;
+    float atmospheric_thickness = (outer_intersection.y - outer_intersection.x)/1.0;
+
+    // float travel = outer_intersection.x < 0.0f? outer_intersection.y : outer_intersection.x;
+
+    float height = distance(ray_origin + ray_direction * (outer_intersection.x + atmospheric_thickness/2.0), body_origin)/body_radius;
+
     
     if(inner_intersection.y < 0.0){
-        gl_FragColor = vec4(body_color1, atmospheric_thickness);
+        gl_FragColor = vec4(body_color1 , exp(-height));
     }else{
-        gl_FragColor = vec4(body_color1 * max(0.5, inner_thickness), 1.0);
+        gl_FragColor = vec4(body_color1 , 1.0);
     }
 
 }
