@@ -332,7 +332,7 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Earth",
         physic_body = {
-            position = {600, 0, 0},
+            position = {6000, 0, 0},
             velocity = {0.0, 0, 0},
             mass = 2000
         },
@@ -531,7 +531,7 @@ main :: proc(){
                 case .MOUSE_MOTION:
                     if(sdl3.GetWindowRelativeMouseMode(window)){
                         main_camera.yaw   += cast(f32)event.motion.xrel * 0.2
-                        // main_camera.pitch -= cast(f32)event.motion.yrel * 0.2
+                        main_camera.pitch -= cast(f32)event.motion.yrel * 0.2
                         main_camera.pitch = math.clamp(main_camera.pitch, -89.9, 89.9)
                     }
 
@@ -550,7 +550,13 @@ main :: proc(){
         view := camera_update(&main_camera, f32(delta_t) * 165) 
         projection := glm.mat4Perspective(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1, 1000.0)
 
-        main_camera.position = earth.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*500, 0, -math.sin( math.to_radians(main_camera.yaw) )*500}
+        main_camera.position = earth.physic_body.position + 400 * glm.normalize(
+    [3]f32{-math.cos(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch)),
+           -math.sin(glm.radians(main_camera.pitch)),
+           -math.sin(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch))})
+
+
+
         // main_camera.position = mars.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*2, 0, -math.sin( math.to_radians(main_camera.yaw) )*2}
         
         gl.ClearColor(0.0, 0.0, 0.0, 1.0)

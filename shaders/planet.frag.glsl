@@ -104,6 +104,19 @@ float snoise(vec3 v)
                                 dot(p2,x2), dot(p3,x3) ) );
   }
 
+float fbm(vec3 p, int octaves){
+    float value = 0; 
+    float frequency = 1.0f;
+    float amplitude = 0.5f;
+    for (int i = 0; i < octaves; i++){
+        float val = snoise((p + i) * frequency); 
+
+        value += val * amplitude;
+        amplitude /= 2;
+        frequency *= 2;
+    }
+    return value;
+}
 
 float ridged(vec3 p, int octaves){
     float value = 0; 
@@ -310,7 +323,7 @@ vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l ) {
      	sum_mie * k_mie * phase_mie( -0.78, c, cc );
     
 	
-	return 10.0 * scatter;
+	return 15.0 * scatter;
 }
 
 void main(){
@@ -381,7 +394,7 @@ void main(){
         normal = sphere_normal;
     }
 
-    float polarness = abs(intersection_point.y) / (body_radius*0.8f);
+    float polarness = abs(intersection_point.y) / (0.8f);
 
     if(planet_has_ice_caps && polarness + height*0.1 > 1.0){
         ground_color = planet_ice_color;
@@ -408,10 +421,15 @@ void main(){
 
     scatter = 1.0 - exp(-scatter);
 
+
     if(ground_intersection.y < 0.0){ 
         gl_FragColor = vec4(scatter, min(1.0, length(scatter)));
     }else{
-        gl_FragColor = vec4(mix(diffuse * ground_color, scatter, 0.9), 1.0);
+        vec3 cloud_point = intersection_point * vec3(1.5, 2.5, 1.5) + 40.0;
+        float cloud_thickness = fbm(cloud_point + fbm(cloud_point * 0.5 + time/100.0 + fbm(cloud_point * 0.25 - time/200.0, 2), 3), 6) + fbm(cloud_point * 2.0, 5);
+
+        float cloud_factor = clamp(1.0 - exp( -2.0 * cloud_thickness), 0.0, 1.0);
+
+        gl_FragColor = vec4(mix(diffuse * mix(ground_color, vec3(1.0), cloud_factor), scatter, 0.85), 1.0);
     }
-    // gl_FragColor = vec4(scatter, 1.0);
 }
