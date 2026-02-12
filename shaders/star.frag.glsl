@@ -51,17 +51,18 @@ void main(){
 
     if(outer_intersection.y < 0.0){
         discard;
+    }else{
     }
 
 
-    float z_far = 1495978707000.0;
-    float z_near = 0.1;
-
-    float A = (z_far + z_near) / (z_far - z_near);
-    float B = (-2.0 * z_far * z_near) / (z_far - z_near);
-
-    float depth = A + 1/outer_intersection.x * B;
-    gl_FragDepth = depth;
+    // float z_far = 1495978707000.0;
+    // float z_near = 0.1;
+    //
+    // float A = (z_far + z_near) / (z_far - z_near);
+    // float B = (-2.0 * z_far * z_near) / (z_far - z_near);
+    //
+    // float depth = A + 1/outer_intersection.x * B;
+    // gl_FragDepth = depth;
 
     // float inner_thickness = (inner_intersection.y - inner_intersection.x)/1.0;
     float atmospheric_thickness = (outer_intersection.y - outer_intersection.x)/1.0;

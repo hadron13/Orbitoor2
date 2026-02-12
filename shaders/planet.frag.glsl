@@ -296,14 +296,6 @@ vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l ) {
         n_ray0 += d_ray;
         n_mie0 += d_mie;
         
-#if 0
-        vec2 e = ray_vs_sphere( v, l, R_INNER );
-        e.x = max( e.x, 0.0 );
-        if ( e.x < e.y ) {
-           continue;
-        }
-#endif
-        
         vec2 f = ray_vs_sphere( v, l, R );
 		vec3 u = v + l * f.y;
         
@@ -326,6 +318,48 @@ vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l ) {
 	return 15.0 * scatter;
 }
 
+//
+//  // ----------------------------------------------------------------------------
+// float DistributionGGX(vec3 N, vec3 H, float roughness)
+// {
+//     float a = roughness*roughness;
+//     float a2 = a*a;
+//     float NdotH = max(dot(N, H), 0.0);
+//     float NdotH2 = NdotH*NdotH;
+//
+//     float nom   = a2;
+//     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+//     denom = PI * denom * denom;
+//
+//     return nom / denom;
+// }
+// // ----------------------------------------------------------------------------
+// float GeometrySchlickGGX(float NdotV, float roughness)
+// {
+//     float r = (roughness + 1.0);
+//     float k = (r*r) / 8.0;
+//
+//     float nom   = NdotV;
+//     float denom = NdotV * (1.0 - k) + k;
+//
+//     return nom / denom;
+// }
+// // ----------------------------------------------------------------------------
+// float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+// {
+//     float NdotV = max(dot(N, V), 0.0);
+//     float NdotL = max(dot(N, L), 0.0);
+//     float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+//     float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+//
+//     return ggx1 * ggx2;
+// }
+// // ----------------------------------------------------------------------------
+// vec3 fresnelSchlick(float cosTheta, vec3 F0)
+// {
+//     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+// }
+//
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
     vec2 centered_uv = (uv - 0.5)*2;
@@ -366,7 +400,7 @@ void main(){
     float depth = A + 1/closest_intersection.x * B;
     gl_FragDepth = depth;
 
-    int octaves = 6 - clamp(int(sqrt(closest_intersection.x/body_radius)), 0, 3);
+    int octaves = 7 - clamp(int(sqrt(closest_intersection.x/body_radius)), 0, 3);
 
 
     vec3 intersection_point = normalize(ray_origin + ray_direction * ground_intersection.x - body_origin); 
@@ -387,26 +421,31 @@ void main(){
     vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
     vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
 
-    vec3 ground_color = body_color1;
+    vec3 surface_color = body_color1;
+    float specular_factor = 0;
 
     if(planet_has_sea && height < 1.1){
-        ground_color = planet_sea_color;
+        surface_color = mix(planet_sea_color, surface_color, smoothstep(1.05, 1.1,height));
         normal = sphere_normal;
+        specular_factor = 1.0;
     }
 
-    float polarness = abs(intersection_point.y) / (0.8f);
+    float polarness = abs(intersection_point.y) / (0.9f);
 
     if(planet_has_ice_caps && polarness + height*0.1 > 1.0){
-        ground_color = planet_ice_color;
+        surface_color = planet_ice_color;
     }
    
     float diffuse = 0;
+    float specular = 0;
     for(int i = 0; i < 8; i++){
         vec3 to_light = light_positions[i] - body_origin;
         float distance = length(to_light);
-        float attenuation = 1.0 / (0.1 + 0.01 * distance + 0.005 * distance * distance);
+        float attenuation = 1.0 / (distance * distance);
 
         vec3 light_direction = normalize(to_light); 
+        vec3 halfway_direction = -normalize(-light_direction + ray_direction);
+
         diffuse += max(0.0, dot(sphere_normal, light_direction) * max(0.1, dot(normal, light_direction))) * light_colors[i].w * attenuation;
     }
 
@@ -426,10 +465,11 @@ void main(){
         gl_FragColor = vec4(scatter, min(1.0, length(scatter)));
     }else{
         vec3 cloud_point = intersection_point * vec3(1.5, 2.5, 1.5) + 40.0;
-        float cloud_thickness = fbm(cloud_point + fbm(cloud_point * 0.5 + time/100.0 + fbm(cloud_point * 0.25 - time/200.0, 2), 3), 6) + fbm(cloud_point * 2.0, 5);
+        float cloud_thickness = fbm(cloud_point + fbm(cloud_point * 0.75 + time/100.0 + fbm(cloud_point * 0.25 - time/200.0, 2), 3), 4) + max(0.0, fbm(cloud_point * 2.0, 5));
 
         float cloud_factor = clamp(1.0 - exp( -2.0 * cloud_thickness), 0.0, 1.0);
+        // cloud_factor = cloud_thickness;
 
-        gl_FragColor = vec4(mix(diffuse * mix(ground_color, vec3(1.0), cloud_factor), scatter, 0.85), 1.0);
+        gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), cloud_factor), scatter, 0.85), 1.0);
     }
 }

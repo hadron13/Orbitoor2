@@ -295,8 +295,8 @@ main :: proc(){
 
 
 
-    vertex_shader_paths := []string{"shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/quad.vert.glsl", "shaders/standard.vert.glsl"}
-    fragment_shader_paths := []string{"shaders/planet.frag.glsl", "shaders/star.frag.glsl", "shaders/background.frag.glsl", "shaders/mesh.frag.glsl"} 
+    vertex_shader_paths := []string{"shaders/billboard.vert.glsl", "shaders/billboard.vert.glsl", "shaders/quad.vert.glsl",       "shaders/standard.vert.glsl"}
+    fragment_shader_paths := []string{"shaders/planet.frag.glsl",  "shaders/star.frag.glsl",      "shaders/background.frag.glsl", "shaders/mesh.frag.glsl"} 
     shader_uniforms := []^map[string]gl.Uniform_Info{&planet_shader_uniforms, &star_shader_uniforms, &background_shader_uniforms, &mesh_shader_uniforms}
     shader_programs := []^u32{&planet_shader, &star_shader, &background_shader, &mesh_shader}
 
@@ -332,7 +332,7 @@ main :: proc(){
         type = .ROCKY_PLANET,
         name = "Earth",
         physic_body = {
-            position = {6000, 0, 0},
+            position = {600, 0, 0},
             velocity = {0.0, 0, 0},
             mass = 2000
         },
@@ -408,7 +408,7 @@ main :: proc(){
         type = .STAR,
         name = "Solus",
         physic_body = {
-            position = {-5.0, 0, 0},
+            position = {-5.0, -1000.0, 0},
             velocity = {0, 0, 5.0},
             mass = 100.0
         },
@@ -426,14 +426,14 @@ main :: proc(){
         physic_body = {
             position = {0, 0, 149597870.0},
             velocity = {0, 0, 5.0},
-            mass = 10000000000.0
+            mass = 1e18
         },
         radius = 695508.0,
         rotation_axis = {0, 1.0, 0},
         rotation_speed = 1.0, 
-        primary_color = blackbody_radiation(1800, false).xyz,
-        luminosity = 2e14,
-        temperature = 1800.0
+        primary_color = blackbody_radiation(5000, false).xyz,
+        luminosity = 149597870 * 149597870 * 3.0,
+        temperature = 5000.0
     }
 
     moon := celestial_body{
@@ -455,7 +455,7 @@ main :: proc(){
 
     suns := []^celestial_body{&chongus}
 
-    VERTEX_SHADER_PATH :: "shaders/quad.vert.glsl"
+    VERTEX_SHADER_PATH :: "shaders/billboard.vert.glsl"
     FRAGMENT_SHADER_PATH :: "shaders/planet.frag.glsl"
 
     stat, err := os.stat(FRAGMENT_SHADER_PATH)
@@ -546,14 +546,8 @@ main :: proc(){
         
         
         model := glm.identity(glm.mat4)
-        model *= glm.mat4Translate(vec3{0, 5.0, 0})
         view := camera_update(&main_camera, f32(delta_t) * 165) 
-        projection := glm.mat4Perspective(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1, 1000.0)
-
-        main_camera.position = earth.physic_body.position + 400 * glm.normalize(
-    [3]f32{-math.cos(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch)),
-           -math.sin(glm.radians(main_camera.pitch)),
-           -math.sin(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch))})
+        projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1)
 
 
 
@@ -601,13 +595,20 @@ main :: proc(){
             }
             apply_velocity(&body.physic_body, f32(delta_t))
 
-            draw_celestial_body(body, &main_camera, time, width, height, suns)
+            // if(body == &earth){
+            //     main_camera.position = earth.physic_body.position + 300 * glm.normalize(
+            // [3]f32{-math.cos(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch)),
+            //        -math.sin(glm.radians(main_camera.pitch)),
+            //        -math.sin(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch))})
+            // }
+
+            draw_celestial_body(body, &main_camera, time, width, height, suns, &view, &projection)
         }
 
 
         gl.Enable(gl.DEPTH_TEST)
         gl.CullFace(gl.BACK)
-        mesh_draw(&ship_mesh, &model, &view, &projection)
+        // mesh_draw(&ship_mesh, &model, &view, &projection)
         gl.CullFace(gl.FRONT)
 
         sdl3.GL_SwapWindow(window)
@@ -645,7 +646,7 @@ blackbody_radiation :: proc(T: f32, bComputeRadiance: bool) -> vec4{
     return ChromaRadiance;
 }
 
-draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, suns: []^celestial_body){
+draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, suns: []^celestial_body, view : ^glm.mat4, projection : ^glm.mat4){
 
     uniforms : ^map[string]gl.Uniform_Info
 
@@ -657,6 +658,22 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
             gl.UseProgram(star_shader) 
             uniforms = &star_shader_uniforms
     }
+
+    model := glm.identity(glm.mat4)
+    model *= glm.mat4Translate(body.physic_body.position)
+    model *= glm.mat4Rotate({0, 1.0, 0}, -glm.radians(camera.yaw) - glm.PI/2.0)
+    model *= glm.mat4Rotate({1.0, 0.0, 0}, glm.radians(camera.pitch))
+    r := body.atmosphere_radius
+
+    if(body.type == .STAR) do r = body.radius * 8.0;
+    // glm.mat4LookAt(body.physic_body.position, camera.)
+    
+    r *= 1.2
+    model *= glm.mat4Scale({r, r, r})
+
+    gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
+    gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0,0])
+    gl.UniformMatrix4fv(mesh_shader_uniforms["model"].location, 1, gl.FALSE, &model[0,0])
     
     gl.Uniform2f(uniforms["resolution"].location, f32(width), f32(height))
     gl.Uniform1f(uniforms["time"].location, time)
