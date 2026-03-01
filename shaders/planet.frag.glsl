@@ -172,6 +172,7 @@ vec3 ray_dir( float fov, vec2 size, vec2 pos ) {
 	return normalize( vec3( xy, -z ) );
 }
 
+uniform sampler2D colormap;
 
 uniform float time;
 uniform vec2 resolution;
@@ -360,6 +361,7 @@ vec3 in_scatter( vec3 o, vec3 dir, vec2 e, vec3 l ) {
 //     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 // }
 //
+
 void main(){
     vec2 uv = gl_FragCoord.xy/resolution.y - vec2((resolution.x/resolution.y - 1.0)/2.0, 0);
     vec2 centered_uv = (uv - 0.5)*2;
@@ -391,6 +393,7 @@ void main(){
     }
     
 
+
     float z_far = 100000000.0;
     float z_near = 0.1;
 
@@ -406,6 +409,12 @@ void main(){
     vec3 intersection_point = normalize(ray_origin + ray_direction * ground_intersection.x - body_origin); 
 
     vec3 sphere_normal = normalize(intersection_point); 
+
+    vec2 map_uv = vec2(
+      atan(sphere_normal.z, sphere_normal.x) / (PI * 2.0),
+      acos(-sphere_normal.y) / PI
+    );
+
     vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
   
@@ -472,4 +481,6 @@ void main(){
 
         gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), cloud_factor), scatter, 0.85), 1.0);
     }
+    gl_FragColor = texture2D(colormap, map_uv);
+    // gl_FragColor = vec4(uv, 0, 1.0);
 }

@@ -1,6 +1,5 @@
 package orbitoor
 
-
 import "vendor:sdl3"
 import gl "vendor:OpenGL"
 import "core:fmt"
@@ -66,6 +65,11 @@ mesh :: struct{
 
 planet_shader : u32
 planet_shader_uniforms : map[string]gl.Uniform_Info
+
+planet_heightmaps: map[string]u32
+planet_colormaps: map[string]u32
+
+
 star_shader : u32
 star_shader_uniforms : map[string]gl.Uniform_Info
 background_shader : u32
@@ -239,6 +243,29 @@ main :: proc(){
     gl.CullFace(gl.FRONT)
 
 
+    earth_tex :u32
+    gl.GenTextures(1, &earth_tex)
+    gl.BindTexture(gl.TEXTURE_2D, skybox_tex_id)
+    
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);	
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    width, height, channels: c.int
+    img_data := stbi.load("textures/earthlike_color.png", &width, &height, &channels, 0)
+
+    gl.TexImage2D(
+        gl.TEXTURE_2D, 
+        0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
+    )
+    gl.GenerateMipmap(gl.TEXTURE_2D);
+
+
+    fmt.println(gl.get_last_error_message())
+
+    planet_colormaps["earth"] = earth_tex
+
     gl.GenTextures(1, &skybox_tex_id)
     gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
     
@@ -264,6 +291,7 @@ main :: proc(){
     gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+
 
 
     quad : []f32 = {
@@ -323,7 +351,6 @@ main :: proc(){
     // }
 
 
-    width, height : c.int
     sdl3.GetWindowSize(window, &width, &height)
 
     main_camera = { position = {10.0, 0, 30.0}, yaw = 90, fov = 90 }
@@ -426,7 +453,7 @@ main :: proc(){
         physic_body = {
             position = {0, 0, 149597870.0},
             velocity = {0, 0, 5.0},
-            mass = 1e18
+            mass = 1e10
         },
         radius = 695508.0,
         rotation_axis = {0, 1.0, 0},
@@ -547,7 +574,7 @@ main :: proc(){
         
         model := glm.identity(glm.mat4)
         view := camera_update(&main_camera, f32(delta_t) * 165) 
-        projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.1)
+        projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.01)
 
 
 
@@ -670,6 +697,8 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
     
     r *= 1.2
     model *= glm.mat4Scale({r, r, r})
+    
+
 
     gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
     gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0,0])
@@ -726,8 +755,10 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
         if(body.has_ice_caps){
             gl.Uniform3fv(uniforms["planet_ice_color"].location, 1, &body.ice_color[0])
         }
+        gl.Uniform1i(uniforms["colormap"].location, i32(planet_colormaps["earth"]))
     }
 
+    gl.BindTexture(gl.TEXTURE_2D, planet_colormaps["earth"])
     gl.BindVertexArray(quad_vao)
     gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
