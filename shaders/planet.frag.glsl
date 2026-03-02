@@ -118,22 +118,6 @@ float fbm(vec3 p, int octaves){
     return value;
 }
 
-float ridged(vec3 p, int octaves){
-    float value = 0; 
-    float frequency = 1.0f;
-    float amplitude = 1.0f;
-    for (int i = 0; i < octaves; i++){
-        float val = snoise((p + i) * frequency); 
-        val = 1-abs(val);
-        val *= val;
-
-        value += val * amplitude;
-        amplitude /= 2;
-        frequency *= 2;
-    }
-    return value;
-}
-
 mat3 rotation_mat(vec3 axis, float angle) {
     axis = normalize(axis);
     float s = sin(angle);
@@ -419,31 +403,13 @@ void main(){
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
   
     intersection_point *= rotation_mat(body_axis, time * body_rotation_speed);
-    float height = ridged(intersection_point, octaves);
+
+    // vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
+    // vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
     
-    float eps = 0.0005;
-    float height_north = ridged(intersection_point + eps * tangent_up, octaves);
-    float height_south = ridged(intersection_point - eps * tangent_up, octaves);
-    float height_east = ridged(intersection_point  + eps * tangent_right, octaves);
-    float height_west = ridged(intersection_point  - eps * tangent_right, octaves);
 
-    vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
-    vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
-
-    vec3 surface_color = body_color1;
-    float specular_factor = 0;
-
-    if(planet_has_sea && height < 1.1){
-        surface_color = mix(planet_sea_color, surface_color, smoothstep(1.05, 1.1,height));
-        normal = sphere_normal;
-        specular_factor = 1.0;
-    }
-
-    float polarness = abs(intersection_point.y) / (0.9f);
-
-    if(planet_has_ice_caps && polarness + height*0.1 > 1.0){
-        surface_color = planet_ice_color;
-    }
+    vec3 surface_color = texture2D(colormap, map_uv).rgb;
+    vec3 normal = sphere_normal;
    
     float diffuse = 0;
     float specular = 0;
@@ -479,8 +445,8 @@ void main(){
         float cloud_factor = clamp(1.0 - exp( -2.0 * cloud_thickness), 0.0, 1.0);
         // cloud_factor = cloud_thickness;
 
-        gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), cloud_factor), scatter, 0.85), 1.0);
+        gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), cloud_factor), scatter, 0.5), 1.0);
     }
-    gl_FragColor = texture2D(colormap, map_uv);
+    // gl_FragColor = 
     // gl_FragColor = vec4(uv, 0, 1.0);
 }

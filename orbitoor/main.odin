@@ -50,10 +50,6 @@ celestial_body :: struct{
     has_sea : bool,
     sea_threshold: f32,
     sea_color : vec3,
-
-    has_ice_caps: bool,
-    ice_cap_range : f32,
-    ice_color : vec3,
 }
 
 mesh :: struct{
@@ -249,7 +245,7 @@ main :: proc(){
     
     gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);	
     gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
     width, height, channels: c.int
@@ -259,7 +255,7 @@ main :: proc(){
         gl.TEXTURE_2D, 
         0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
     )
-    gl.GenerateMipmap(gl.TEXTURE_2D);
+    // gl.GenerateMipmap(gl.TEXTURE_2D);
 
 
     fmt.println(gl.get_last_error_message())
@@ -373,8 +369,6 @@ main :: proc(){
         has_atmosphere = true,  
         atmosphere_radius = 300, 
         rayleigh_coefficient = {0, 0, 0.8}, 
-        has_ice_caps = true,
-        ice_color = {0.9, 0.9, 0.9}
     }
 
     mars := celestial_body{
@@ -395,8 +389,6 @@ main :: proc(){
         has_atmosphere = true,  
         atmosphere_radius = 1.0, 
         rayleigh_coefficient = {0.8, 0, 0}, 
-        has_ice_caps = true,
-        ice_color = {0.9, 0.9, 0.9}
     }
 
     mercury := celestial_body{
@@ -750,11 +742,6 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
             gl.Uniform3fv(uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
         }
 
-        //ice caps params
-        gl.Uniform1i(uniforms["planet_has_ice_caps"].location, i32(body.has_ice_caps))
-        if(body.has_ice_caps){
-            gl.Uniform3fv(uniforms["planet_ice_color"].location, 1, &body.ice_color[0])
-        }
         gl.Uniform1i(uniforms["colormap"].location, i32(planet_colormaps["earth"]))
     }
 
