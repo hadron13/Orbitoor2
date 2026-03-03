@@ -8,6 +8,7 @@ import "core:time"
 import "core:c"
 import "core:math"
 import "core:sort"
+import "core:strings"
 import glm "core:math/linalg/glsl"
 import "vendor:cgltf"
 import stbi "vendor:stb/image"
@@ -239,28 +240,28 @@ main :: proc(){
     gl.CullFace(gl.FRONT)
 
 
-    earth_tex :u32
-    gl.GenTextures(1, &earth_tex)
-    gl.BindTexture(gl.TEXTURE_2D, skybox_tex_id)
-    
-    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);	
-    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-
+    // earth_tex :u32
+    // gl.GenTextures(1, &earth_tex)
+    // gl.BindTexture(gl.TEXTURE_2D, skybox_tex_id)
+    // 
+    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);	
+    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    //
     width, height, channels: c.int
-    img_data := stbi.load("textures/earthlike_color.png", &width, &height, &channels, 0)
-
-    gl.TexImage2D(
-        gl.TEXTURE_2D, 
-        0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
-    )
+    // img_data := stbi.load("textures/earth_color.png", &width, &height, &channels, 0)
+    //
+    // gl.TexImage2D(
+    //     gl.TEXTURE_2D, 
+    //     0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
+    // )
     // gl.GenerateMipmap(gl.TEXTURE_2D);
 
 
-    fmt.println(gl.get_last_error_message())
+    // fmt.println(gl.get_last_error_message())
 
-    planet_colormaps["earth"] = earth_tex
+    // planet_colormaps["earth"] = earth_tex
 
     gl.GenTextures(1, &skybox_tex_id)
     gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
@@ -346,7 +347,7 @@ main :: proc(){
     //     sdl3.Log("%s - %i", uniform.name, uniform.location)
     // }
 
-
+    
     sdl3.GetWindowSize(window, &width, &height)
 
     main_camera = { position = {10.0, 0, 30.0}, yaw = 90, fov = 90 }
@@ -472,6 +473,63 @@ main :: proc(){
         has_atmosphere = false,  
     }
 
+    bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
+
+    for body in bodies{
+        if(body.type != .ROCKY_PLANET) do continue
+
+        height_filename := fmt.caprintf("textures/%s_height.png", strings.to_lower(body.name, context.temp_allocator)) 
+        color_filename := fmt.caprintf("textures/%s_color.png", strings.to_lower(body.name, context.temp_allocator))
+        height_tex, color_tex : u32
+
+        width, height, channels: c.int
+       
+        height_data := stbi.load_16(height_filename, &width, &height, &channels, 0) 
+        if height_data == nil{
+            fmt.printfln("could not open heightmap %s: %s", height_filename, stbi.failure_reason())
+            continue
+        }
+
+        gl.GenTextures(1, &height_tex)
+
+        gl.BindTexture(gl.TEXTURE_2D, height_tex) 
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+        gl.TexImage2D(
+            gl.TEXTURE_2D, 0, gl.R16, width, height, 0, gl.RED, gl.UNSIGNED_SHORT, height_data
+        )
+        stbi.image_free(height_data)
+
+        planet_heightmaps[body.name] = height_tex
+        fmt.printfln("loaded heightmap %s -> id %i", height_filename, height_tex)
+         
+        color_data := stbi.load(color_filename, &width, &height, &channels, 0)
+        if color_data == nil{
+            fmt.printfln("could not open colormap %s: %s", color_filename, stbi.failure_reason())
+            continue
+        }
+        gl.GenTextures(1, &color_tex)
+
+        gl.BindTexture(gl.TEXTURE_2D, color_tex) 
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+        gl.TexImage2D(
+            gl.TEXTURE_2D, 
+            0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, color_data 
+        )
+        stbi.image_free(color_data)
+
+        planet_colormaps[body.name] = color_tex
+        fmt.printfln("loaded colormap %s -> id %i", color_filename, color_tex)
+
+    }
+
     suns := []^celestial_body{&chongus}
 
     VERTEX_SHADER_PATH :: "shaders/billboard.vert.glsl"
@@ -595,7 +653,6 @@ main :: proc(){
         time := f32(sdl3.GetTicks())/1000.0;
 
 
-        bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
         sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int{
             return (glm.distance(a.physic_body.position, main_camera.position) > glm.distance(b.physic_body.position, main_camera.position))? -1 : 0;
         })
@@ -742,10 +799,18 @@ draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, w
             gl.Uniform3fv(uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
         }
 
-        gl.Uniform1i(uniforms["colormap"].location, i32(planet_colormaps["earth"]))
+        colormap := planet_colormaps[body.name] or_else planet_colormaps["Earth"]
+        heightmap := planet_heightmaps[body.name] or_else planet_heightmaps["Earth"]
+
+        gl.Uniform1i(uniforms["colormap"].location, 0)
+        gl.Uniform1i(uniforms["heightmap"].location, 1)
+        
+        gl.ActiveTexture(gl.TEXTURE0)
+        gl.BindTexture(gl.TEXTURE_2D, colormap)
+        gl.ActiveTexture(gl.TEXTURE1)
+        gl.BindTexture(gl.TEXTURE_2D, heightmap)
     }
 
-    gl.BindTexture(gl.TEXTURE_2D, planet_colormaps["earth"])
     gl.BindVertexArray(quad_vao)
     gl.DrawArrays(gl.TRIANGLES, 0, 6)
 

@@ -157,6 +157,7 @@ vec3 ray_dir( float fov, vec2 size, vec2 pos ) {
 }
 
 uniform sampler2D colormap;
+uniform sampler2D heightmap;
 
 uniform float time;
 uniform vec2 resolution;
@@ -180,9 +181,6 @@ uniform vec3 planet_sea_color;
 uniform bool  planet_has_atmosphere;
 uniform float planet_atmosphere_radius;
 uniform vec3  planet_atmosphere_color;
-
-uniform bool planet_has_ice_caps;
-uniform vec3 planet_ice_color;
 
 
 // Scattering written by GLtracy
@@ -404,12 +402,19 @@ void main(){
   
     intersection_point *= rotation_mat(body_axis, time * body_rotation_speed);
 
-    // vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
-    // vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
+    float eps = 0.001;
+
+    float height_west = texture2D(heightmap, map_uv - vec2(-eps, 0.0) ).r;
+    float height_east = texture2D(heightmap, map_uv - vec2(eps, 0.0) ).r;
+    float height_north = texture2D(heightmap, map_uv - vec2(0.0, eps) ).r;
+    float height_south = texture2D(heightmap, map_uv - vec2(0.0, -eps) ).r;
+
+    vec3 noise_normal = normalize(vec3(height_west - height_east, height_south - height_north, 0.05));
+    vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
     
 
     vec3 surface_color = texture2D(colormap, map_uv).rgb;
-    vec3 normal = sphere_normal;
+    // vec3 normal = sphere_normal;
    
     float diffuse = 0;
     float specular = 0;
@@ -442,11 +447,11 @@ void main(){
         vec3 cloud_point = intersection_point * vec3(1.5, 2.5, 1.5) + 40.0;
         float cloud_thickness = fbm(cloud_point + fbm(cloud_point * 0.75 + time/100.0 + fbm(cloud_point * 0.25 - time/200.0, 2), 3), 4) + max(0.0, fbm(cloud_point * 2.0, 5));
 
-        float cloud_factor = clamp(1.0 - exp( -2.0 * cloud_thickness), 0.0, 1.0);
+        float cloud_factor = clamp(1.0 - exp( -3.0 * cloud_thickness), 0.0, 1.0);
         // cloud_factor = cloud_thickness;
 
-        gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), cloud_factor), scatter, 0.5), 1.0);
+        gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), 0.0), scatter, 0.7), 1.0);
     }
-    // gl_FragColor = 
+    // gl_FragColor = vec4(vec3(texture2D(heightmap, map_uv).r), 1.0);
     // gl_FragColor = vec4(uv, 0, 1.0);
 }
