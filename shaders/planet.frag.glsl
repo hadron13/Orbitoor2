@@ -397,6 +397,8 @@ void main(){
       acos(-sphere_normal.y) / PI
     );
 
+    map_uv.x += time/500.0;
+
     vec3 tangent_right = normalize(cross(vec3(0, 1.0, 0), sphere_normal));
     vec3 tangent_up = normalize(cross(tangent_right, sphere_normal));
   
@@ -404,6 +406,7 @@ void main(){
 
     float eps = 0.001;
 
+    float height = texture2D(heightmap, map_uv).r;
     float height_west = texture2D(heightmap, map_uv - vec2(-eps, 0.0) ).r;
     float height_east = texture2D(heightmap, map_uv - vec2(eps, 0.0) ).r;
     float height_north = texture2D(heightmap, map_uv - vec2(0.0, eps) ).r;
@@ -413,9 +416,10 @@ void main(){
     vec3 normal = normalize(noise_normal.x * tangent_right + noise_normal.y * tangent_up + noise_normal.z * sphere_normal);
     
 
-    vec3 surface_color = texture2D(colormap, map_uv).rgb;
-    // vec3 normal = sphere_normal;
-   
+    vec3 surface_color = height > 0.2? texture2D(colormap, map_uv).rgb : vec3(0.05, 0.05, 0.8);
+    if(height < 0.2)
+        normal = sphere_normal;
+
     float diffuse = 0;
     float specular = 0;
     for(int i = 0; i < 8; i++){
