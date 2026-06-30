@@ -1,16 +1,16 @@
 package orbitoor
 
-import "vendor:sdl3"
-import gl "vendor:OpenGL"
-import "core:fmt"
-import "core:os"
-import "core:time"
 import "core:c"
+import "core:fmt"
 import "core:math"
+import glm "core:math/linalg/glsl"
+import "core:os"
 import "core:sort"
 import "core:strings"
-import glm "core:math/linalg/glsl"
+import "core:time"
+import gl "vendor:OpenGL"
 import "vendor:cgltf"
+import "vendor:sdl3"
 import stbi "vendor:stb/image"
 
 
@@ -18,280 +18,195 @@ vec2 :: [2]f32
 vec3 :: [3]f32
 vec4 :: [4]f32
 
-body :: struct{
-    mass : f32,
-    position : vec3,
-    velocity : vec3
+body :: struct {
+	mass:     f32,
+	position: vec3,
+	velocity: vec3,
 }
 
-celestial_body_type :: enum{    
-    STAR, ROCKY_PLANET, GAS_PLANET, ASTEROID, BLACK_HOLE
+celestial_body_type :: enum {
+	STAR,
+	ROCKY_PLANET,
+	GAS_PLANET,
+	ASTEROID,
+	BLACK_HOLE,
 }
 
 
-celestial_body :: struct{
-    type : celestial_body_type,
-    name : string,
-    physic_body : body,
-    radius : f32,
-    rotation_axis : vec3,
-    rotation_speed : f32,
-
-    temperature : f32,
-    luminosity : f32,
-    primary_color : vec3, 
-    secondary_color: vec3,
-    
-    has_atmosphere : bool,
-    atmosphere_radius: f32,
-    atmospheric_density : f32,
-    rayleigh_coefficient : vec3,
-    mie_coefficient: vec3, 
-
-    has_sea : bool,
-    sea_threshold: f32,
-    sea_color : vec3,
+celestial_body :: struct {
+	type:                 celestial_body_type,
+	name:                 string,
+	physic_body:          body,
+	radius:               f32,
+	rotation_axis:        vec3,
+	rotation_speed:       f32,
+	temperature:          f32,
+	luminosity:           f32,
+	primary_color:        vec3,
+	secondary_color:      vec3,
+	has_atmosphere:       bool,
+	atmosphere_radius:    f32,
+	atmospheric_density:  f32,
+	rayleigh_coefficient: vec3,
+	mie_coefficient:      vec3,
+	has_sea:              bool,
+	sea_threshold:        f32,
+	sea_color:            vec3,
 }
 
-mesh :: struct{
-    vao:          u32,
-    shader:    u32,
-    indice_type:  u32,
-    indice_count: u32,
+mesh :: struct {
+	vao:          u32,
+	shader:       u32,
+	indice_type:  u32,
+	indice_count: u32,
 }
 
-planet_shader : u32
-planet_shader_uniforms : map[string]gl.Uniform_Info
+planet_shader: u32
+planet_shader_uniforms: map[string]gl.Uniform_Info
 
 planet_heightmaps: map[string]u32
 planet_colormaps: map[string]u32
 
 
-star_shader : u32
-star_shader_uniforms : map[string]gl.Uniform_Info
-background_shader : u32
-background_shader_uniforms : map[string]gl.Uniform_Info
+star_shader: u32
+star_shader_uniforms: map[string]gl.Uniform_Info
+background_shader: u32
+background_shader_uniforms: map[string]gl.Uniform_Info
 mesh_shader: u32
-mesh_shader_uniforms : map[string]gl.Uniform_Info
+mesh_shader_uniforms: map[string]gl.Uniform_Info
 
-quad_vao : u32
+quad_vao: u32
 // ship_vao : u32
-ship_mesh : mesh
+ship_mesh: mesh
 
-skybox_tex_id : u32
+skybox_tex_id: u32
 
 
-
-mesh_load :: proc(filename: cstring) -> (output: mesh, success: b32){
-    options := cgltf.options{}
-    data, result := cgltf.parse_file(options, filename)
-
-    if(result != .success){
-        sdl3.Log("error loading %s", filename)
-        return {}, false
-    }
-    result = cgltf.load_buffers(options, data, filename)
-    if(result != .success){
-        sdl3.Log("error loading buffers of %s", filename)
-        return {}, false
-    }
-
-    first_mesh := data.meshes[0]
-    primitive := &first_mesh.primitives[0]
-
-    index_accessor := primitive.indices
-
-    position_accessor, normal_accessor : ^cgltf.accessor
-
-    for attribute in primitive.attributes{
-
-        if(attribute.type == .position){
-            position_accessor = attribute.data
-        }
-        if(attribute.type == .normal){
-            normal_accessor = attribute.data
-        }
-    }
-
-    mesh_vao, vbo, ebo: u32
-    gl.GenVertexArrays(1, &mesh_vao)
-    gl.GenBuffers(1, &vbo)
-    gl.GenBuffers(1, &ebo)
-   
-    if(position_accessor.buffer_view == normal_accessor.buffer_view){
-        sdl3.Log("interleaved unsupported")
-        return {}, false
-    }
-
-    
-    gl.BindVertexArray(mesh_vao)
-    gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-    gl.BufferData(gl.ARRAY_BUFFER, int(position_accessor.buffer_view.size + normal_accessor.buffer_view.size), nil, gl.STATIC_DRAW)
-    gl.BufferSubData(gl.ARRAY_BUFFER, 0, int(position_accessor.buffer_view.size),
-                 rawptr(uintptr(position_accessor.buffer_view.buffer.data) + uintptr(position_accessor.offset + position_accessor.buffer_view.offset)))
-    
-    gl.BufferSubData(gl.ARRAY_BUFFER, int(normal_accessor.buffer_view.offset), int(normal_accessor.buffer_view.size),
-                 rawptr(uintptr(normal_accessor.buffer_view.buffer.data) + uintptr(normal_accessor.offset + normal_accessor.buffer_view.offset)))
-
-    gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), 0)
-    gl.EnableVertexAttribArray(0)
-    gl.VertexAttribPointer(1, 3, gl.FLOAT, gl.FALSE, i32(position_accessor.stride), uintptr(normal_accessor.offset))
-    gl.EnableVertexAttribArray(1)
-
-    if(primitive.indices == nil){
-        sdl3.Log("no indices found in %s", filename)
-        return {}, false
-    }
-    sdl3.Log("loaded file %s with %i vertices, %i indices", filename, position_accessor.count, primitive.indices.count)
-
-    gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo)
-    gl.BufferData(gl.ELEMENT_ARRAY_BUFFER,
-                 int(index_accessor.count * index_accessor.stride),
-                 rawptr(uintptr(index_accessor.buffer_view.buffer.data) + 
-                        uintptr(index_accessor.offset + index_accessor.buffer_view.offset)),
-                 gl.STATIC_DRAW)
-
-    gl.BindVertexArray(0);
-
-    return {
-        vao = mesh_vao,
-        shader = mesh_shader,
-        indice_type = index_accessor.stride == 2? gl.UNSIGNED_SHORT : gl.UNSIGNED_INT,
-        indice_count = u32(index_accessor.count)
-    }, true
+camera :: struct {
+	position:   vec3,
+	velocity:   vec3,
+	yaw, pitch: f32,
+	fov:        f32,
+	front:      vec3,
 }
 
-mesh_draw :: proc(target_mesh: ^mesh, model, view, projection: ^glm.mat4) { 
-    gl.UseProgram(target_mesh.shader)
+main_camera: camera
 
-    gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
-    gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0,0])
-    gl.UniformMatrix4fv(mesh_shader_uniforms["model"].location, 1, gl.FALSE, &model[0,0])
-    gl.Uniform1i(mesh_shader_uniforms["skybox"].location, 0)
-    gl.Uniform3fv(mesh_shader_uniforms["camera_pos"].location, 1, &main_camera.position[0])
-    gl.BindVertexArray(target_mesh.vao)
-    gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
+camera_update :: proc "c" (camera: ^camera, delta_time: f32) -> glm.mat4 {
 
-    gl.DrawElements(gl.TRIANGLES, i32(target_mesh.indice_count), target_mesh.indice_type, nil)
+	camera.front = glm.normalize(
+		[3]f32 {
+			math.cos(glm.radians(camera.yaw)) * math.cos(glm.radians(camera.pitch)),
+			math.sin(glm.radians(camera.pitch)),
+			math.sin(glm.radians(camera.yaw)) * math.cos(glm.radians(camera.pitch)),
+		},
+	)
+
+	front_straight := glm.normalize([3]f32{camera.front.x, 0, camera.front.z})
+
+	up := [3]f32{0, 1, 0}
+	right := glm.normalize(glm.cross(up, front_straight))
+
+	camera.position -= right * main_camera.velocity.x * delta_time
+	camera.position += up * main_camera.velocity.y * delta_time
+	camera.position -= front_straight * main_camera.velocity.z * delta_time
+
+	return glm.mat4LookAt(main_camera.position, main_camera.position + camera.front, {0, 1, 0})
 
 }
 
-camera :: struct{
-    position : vec3, 
-    velocity : vec3,
-    yaw,pitch: f32,
-    fov      : f32,
-    front    : vec3
-}
+main :: proc() {
+	if (!sdl3.Init({.VIDEO, .EVENTS})) {
+		return
+	}
+	defer sdl3.Quit()
 
-main_camera : camera
+	sdl3.GL_SetAttribute(sdl3.GLAttr.CONTEXT_MAJOR_VERSION, 3)
+	sdl3.GL_SetAttribute(sdl3.GLAttr.CONTEXT_MINOR_VERSION, 3)
+	sdl3.GL_SetAttribute(sdl3.GLAttr.CONTEXT_PROFILE_MASK, i32(sdl3.GLProfile.CORE))
+	sdl3.GL_SetAttribute(sdl3.GLAttr.FRAMEBUFFER_SRGB_CAPABLE, 1)
 
-camera_update :: proc"c"(camera : ^camera, delta_time : f32) -> (glm.mat4){
+	window := sdl3.CreateWindow("Orbitoor", 800, 1000, {.OPENGL, .RESIZABLE})
+	sdl3.MaximizeWindow(window)
+	defer sdl3.DestroyWindow(window)
 
-    camera.front = glm.normalize(
-    [3]f32{math.cos(glm.radians(camera.yaw)) * math.cos(glm.radians(camera.pitch)),
-           math.sin(glm.radians(camera.pitch)),
-           math.sin(glm.radians(camera.yaw)) * math.cos(glm.radians(camera.pitch))})
-    
-    front_straight := glm.normalize([3]f32{camera.front.x, 0, camera.front.z})
+	gl_context := sdl3.GL_CreateContext(window)
+	defer sdl3.GL_DestroyContext(gl_context)
 
-    up := [3]f32{0, 1, 0} 
-    right := glm.normalize(glm.cross(up, front_straight))
+	sdl3.GL_SetSwapInterval(0)
 
-    camera.position -= right          * main_camera.velocity.x * delta_time
-    camera.position += up             * main_camera.velocity.y * delta_time
-    camera.position -= front_straight * main_camera.velocity.z * delta_time 
+	gl.load_up_to(3, 3, sdl3.gl_set_proc_address)
 
-    return glm.mat4LookAt(main_camera.position, main_camera.position + camera.front, {0, 1, 0})
+	fmt.printfln("loaded OpenGL version %s", gl.GetString(gl.VERSION))
+	fmt.printfln("vendor: %s", gl.GetString(gl.VENDOR))
 
-}
-
-main :: proc(){
-    if(!sdl3.Init({.VIDEO , .EVENTS})){
-        return
-    }
-    defer sdl3.Quit()
-    
-    sdl3.GL_SetAttribute(sdl3.GLAttr.CONTEXT_MAJOR_VERSION, 3)
-    sdl3.GL_SetAttribute(sdl3.GLAttr.CONTEXT_MINOR_VERSION, 3)
-    sdl3.GL_SetAttribute(sdl3.GLAttr.CONTEXT_PROFILE_MASK, i32(sdl3.GLProfile.CORE))
-    sdl3.GL_SetAttribute(sdl3.GLAttr.FRAMEBUFFER_SRGB_CAPABLE, 1)
-
-    window := sdl3.CreateWindow("Orbitoor", 800, 1000, {.OPENGL, .RESIZABLE})
-    sdl3.MaximizeWindow(window)
-    defer sdl3.DestroyWindow(window)
-
-    gl_context := sdl3.GL_CreateContext(window)
-    defer sdl3.GL_DestroyContext(gl_context)
-
-    sdl3.GL_SetSwapInterval(0)
-   
-    gl.load_up_to(3, 3, sdl3.gl_set_proc_address)
-
-    fmt.printfln("loaded OpenGL version %s", gl.GetString(gl.VERSION))
-    fmt.printfln("vendor: %s", gl.GetString(gl.VENDOR) )
-    
-    gl.Enable(gl.FRAMEBUFFER_SRGB)
-    gl.Enable(gl.DEPTH_TEST)
-    gl.DepthFunc(gl.LESS)
-    gl.Enable(gl.BLEND)
-    gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
-    gl.Enable(gl.CULL_FACE)
-    gl.CullFace(gl.FRONT)
+	gl.Enable(gl.FRAMEBUFFER_SRGB)
+	gl.Enable(gl.DEPTH_TEST)
+	gl.DepthFunc(gl.LESS)
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	gl.Enable(gl.CULL_FACE)
+	gl.CullFace(gl.FRONT)
 
 
-    // earth_tex :u32
-    // gl.GenTextures(1, &earth_tex)
-    // gl.BindTexture(gl.TEXTURE_2D, skybox_tex_id)
-    // 
-    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);	
-    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    // gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    //
-    width, height, channels: c.int
-    // img_data := stbi.load("textures/earth_color.png", &width, &height, &channels, 0)
-    //
-    // gl.TexImage2D(
-    //     gl.TEXTURE_2D, 
-    //     0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
-    // )
-    // gl.GenerateMipmap(gl.TEXTURE_2D);
+	// earth_tex :u32
+	// gl.GenTextures(1, &earth_tex)
+	// gl.BindTexture(gl.TEXTURE_2D, skybox_tex_id)
+	//
+	// gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+	// gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+	// gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	// gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	//
+	width, height, channels: c.int
+	// img_data := stbi.load("textures/earth_color.png", &width, &height, &channels, 0)
+	//
+	// gl.TexImage2D(
+	//     gl.TEXTURE_2D,
+	//     0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
+	// )
+	// gl.GenerateMipmap(gl.TEXTURE_2D);
 
 
-    // fmt.println(gl.get_last_error_message())
+	// fmt.println(gl.get_last_error_message())
 
-    // planet_colormaps["earth"] = earth_tex
+	// planet_colormaps["earth"] = earth_tex
 
-    gl.GenTextures(1, &skybox_tex_id)
-    gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
-    
-    skybox_filenames :[]cstring={
-        "textures/skybox/px.png",
-        "textures/skybox/nx.png",
-        "textures/skybox/py.png",
-        "textures/skybox/ny.png",
-        "textures/skybox/pz.png",
-        "textures/skybox/nz.png"
-    }
+	gl.GenTextures(1, &skybox_tex_id)
+	gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
 
-    for i := 0; i < 6; i += 1{
-        width, height, channels: c.int
-        img_data := stbi.load(skybox_filenames[i], &width, &height, &channels, 0)
-        gl.TexImage2D(
-            u32(gl.TEXTURE_CUBE_MAP_POSITIVE_X + i), 
-            0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, img_data
-        );
-    }
-    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+	skybox_filenames: []cstring = {
+		"textures/skybox/px.png",
+		"textures/skybox/nx.png",
+		"textures/skybox/py.png",
+		"textures/skybox/ny.png",
+		"textures/skybox/pz.png",
+		"textures/skybox/nz.png",
+	}
+
+	for i := 0; i < 6; i += 1 {
+		width, height, channels: c.int
+		img_data := stbi.load(skybox_filenames[i], &width, &height, &channels, 0)
+		gl.TexImage2D(
+			u32(gl.TEXTURE_CUBE_MAP_POSITIVE_X + i),
+			0,
+			gl.RGBA,
+			width,
+			height,
+			0,
+			gl.RGBA,
+			gl.UNSIGNED_BYTE,
+			img_data,
+		)
+	}
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	gl.TexParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
 
 
-
-    quad : []f32 = {
+	quad : []f32 = {
        -1.0,-1.0, 0, 0, 0,
        -1.0, 1.0, 0, 0, 1,
         1.0,-1.0, 0, 1, 0,
@@ -299,530 +214,583 @@ main :: proc(){
        -1.0, 1.0, 0, 0, 1,
         1.0, 1.0, 0, 1, 1
     }
-    
-    quad_vbo: u32
-    gl.GenVertexArrays(1, &quad_vao)
-    gl.GenBuffers(1, &quad_vbo)
-    
-    gl.BindVertexArray(quad_vao)
-    
-    gl.BindBuffer(gl.ARRAY_BUFFER, quad_vbo)
-    gl.BufferData(gl.ARRAY_BUFFER, len(quad) * size_of(f32), raw_data(quad), gl.STATIC_DRAW)
-
-    gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 5 * size_of(f32), 0)
-    gl.EnableVertexAttribArray(0)
-    gl.VertexAttribPointer(1, 2, gl.FLOAT, gl.FALSE, 5 * size_of(f32), 3 * size_of(f32))
-    gl.EnableVertexAttribArray(1)
-
-    gl.BindBuffer(gl.ARRAY_BUFFER, 0)
-    gl.BindVertexArray(0)
 
 
+	quad_vbo: u32
+	gl.GenVertexArrays(1, &quad_vao)
+	gl.GenBuffers(1, &quad_vbo)
+
+	gl.BindVertexArray(quad_vao)
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, quad_vbo)
+	gl.BufferData(gl.ARRAY_BUFFER, len(quad) * size_of(f32), raw_data(quad), gl.STATIC_DRAW)
+
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 5 * size_of(f32), 0)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(1, 2, gl.FLOAT, gl.FALSE, 5 * size_of(f32), 3 * size_of(f32))
+	gl.EnableVertexAttribArray(1)
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindVertexArray(0)
 
 
-    vertex_shader_paths := []string{"shaders/billboard.vert.glsl", "shaders/billboard.vert.glsl", "shaders/quad.vert.glsl",       "shaders/standard.vert.glsl"}
-    fragment_shader_paths := []string{"shaders/planet.frag.glsl",  "shaders/star.frag.glsl",      "shaders/background.frag.glsl", "shaders/mesh.frag.glsl"} 
-    shader_uniforms := []^map[string]gl.Uniform_Info{&planet_shader_uniforms, &star_shader_uniforms, &background_shader_uniforms, &mesh_shader_uniforms}
-    shader_programs := []^u32{&planet_shader, &star_shader, &background_shader, &mesh_shader}
+	vertex_shader_paths := []string {
+		"shaders/billboard.vert.glsl",
+		"shaders/billboard.vert.glsl",
+		"shaders/quad.vert.glsl",
+		"shaders/standard.vert.glsl",
+	}
+	fragment_shader_paths := []string {
+		"shaders/planet.frag.glsl",
+		"shaders/star.frag.glsl",
+		"shaders/background.frag.glsl",
+		"shaders/mesh.frag.glsl",
+	}
+	shader_uniforms := []^map[string]gl.Uniform_Info {
+		&planet_shader_uniforms,
+		&star_shader_uniforms,
+		&background_shader_uniforms,
+		&mesh_shader_uniforms,
+	}
+	shader_programs := []^u32{&planet_shader, &star_shader, &background_shader, &mesh_shader}
 
-    ok: bool
-    for i := 0; i < len(shader_programs); i+=1{
-        shader_programs[i]^, ok = gl.load_shaders_file(vertex_shader_paths[i], fragment_shader_paths[i])
-        shader_uniforms[i]^ = gl.get_uniforms_from_program(shader_programs[i]^)
+	ok: bool
+	for i := 0; i < len(shader_programs); i += 1 {
+		shader_programs[i]^, ok = gl.load_shaders_file(
+			vertex_shader_paths[i],
+			fragment_shader_paths[i],
+		)
+		shader_uniforms[i]^ = gl.get_uniforms_from_program(shader_programs[i]^)
 
-        if !ok {
-            a, b, c, d := gl.get_last_error_messages()
-            fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
-            return
-        }else{
-            fmt.printfln("Shaders %s %s loaded", vertex_shader_paths[i], fragment_shader_paths[i])
-        }
-    }
-    
-    ship_mesh, success := mesh_load("rocket.glb")
-    if(!success){
-        return
-    }
-    // for key, uniform in planet_shader_uniforms{
-    //     sdl3.Log("%s - %i", uniform.name, uniform.location)
-    // }
+		if !ok {
+			a, b, c, d := gl.get_last_error_messages()
+			fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
+			return
+		} else {
+			fmt.printfln("Shaders %s %s loaded", vertex_shader_paths[i], fragment_shader_paths[i])
+		}
+	}
 
-    
-    sdl3.GetWindowSize(window, &width, &height)
-
-    main_camera = { position = {10.0, 0, 30.0}, yaw = 90, fov = 90 }
-
-    earth := celestial_body{
-        type = .ROCKY_PLANET,
-        name = "Earth",
-        physic_body = {
-            position = {600, 0, 0},
-            velocity = {0.0, 0, 0},
-            mass = 2000
-        },
-        radius = 200,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 0.03, 
-        primary_color = {0.1, 0.6, 0.2},
-        secondary_color = {0.776,0.69,0.239},
-        has_sea = true,
-        sea_color = {0, 0, 0.8},
-        has_atmosphere = true,  
-        atmosphere_radius = 300, 
-        rayleigh_coefficient = {0, 0, 0.8}, 
-    }
-
-    mars := celestial_body{
-        type = .ROCKY_PLANET,
-        name = "Mars",
-        physic_body = {
-            position = {0, 0, 55},
-            velocity = {3.5, 0, 0},
-            mass = 1.5
-        },
-        radius = 0.5,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 2.0, 
-        primary_color = {0.8, 0.2, 0.2},
-        secondary_color = {0.776,0.69,0.239},
-        has_sea = false,
-        sea_color = {0, 0, 0.8},
-        has_atmosphere = true,  
-        atmosphere_radius = 1.0, 
-        rayleigh_coefficient = {0.8, 0, 0}, 
-    }
-
-    mercury := celestial_body{
-        type = .ROCKY_PLANET,
-        name = "Mercury",
-        physic_body = {
-            position = {0, 0, 30},
-            velocity = {6.0, 0, 0},
-            mass = 1.0
-        },
-        radius = 0.5,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 0.05, 
-        primary_color = {0.4, 0.4, 0.4},
-        secondary_color = {0.776,0.69,0.239},
-        has_sea = false,  
-        has_atmosphere = false,  
-    }
-
-    sun := celestial_body{
-        type = .STAR,
-        name = "Sun",
-        physic_body = {
-            position = {5.0, 0, 0},
-            velocity = {0, 0, -5.0},
-            mass = 150.0
-        },
-        radius = 4.0,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 1.0, 
-        primary_color = blackbody_radiation(5000, false).xyz,
-        temperature = 5000.0,
-        luminosity = 500.0
-    }
-    solus := celestial_body{
-        type = .STAR,
-        name = "Solus",
-        physic_body = {
-            position = {-5.0, -1000.0, 0},
-            velocity = {0, 0, 5.0},
-            mass = 100.0
-        },
-        radius = 3.0,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 1.0, 
-        primary_color = blackbody_radiation(30000, false).xyz,
-        temperature = 30000.0,
-        luminosity = 100.0
-    }
-
-    chongus := celestial_body{
-        type = .STAR,
-        name = "Chongus",
-        physic_body = {
-            position = {0, 0, 149597870.0},
-            velocity = {0, 0, 5.0},
-            mass = 1e10
-        },
-        radius = 695508.0,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 1.0, 
-        primary_color = blackbody_radiation(5000, false).xyz,
-        luminosity = 149597870 * 149597870 * 3.0,
-        temperature = 5000.0
-    }
-
-    moon := celestial_body{
-        type = .ROCKY_PLANET,
-        name = "Moon",
-        physic_body = {
-            position = {0, 0, 384400000.0},
-            velocity = {6.0, 0, 0},
-            mass = 1.0
-        },
-        radius = 1737500.0,
-        rotation_axis = {0, 1.0, 0},
-        rotation_speed = 0.05, 
-        primary_color = {0.4, 0.4, 0.4},
-        secondary_color = {0.776,0.69,0.239},
-        has_sea = false,  
-        has_atmosphere = false,  
-    }
-
-    bodies :[]^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
-
-    for body in bodies{
-        if(body.type != .ROCKY_PLANET) do continue
-
-        height_filename := fmt.caprintf("textures/%s_height.png", strings.to_lower(body.name, context.temp_allocator)) 
-        color_filename := fmt.caprintf("textures/%s_color.png", strings.to_lower(body.name, context.temp_allocator))
-        height_tex, color_tex : u32
-
-        width, height, channels: c.int
-       
-        height_data := stbi.load_16(height_filename, &width, &height, &channels, 0) 
-        if height_data == nil{
-            fmt.printfln("could not open heightmap %s: %s", height_filename, stbi.failure_reason())
-            continue
-        }
-
-        gl.GenTextures(1, &height_tex)
-
-        gl.BindTexture(gl.TEXTURE_2D, height_tex) 
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-        gl.TexImage2D(
-            gl.TEXTURE_2D, 0, gl.R16, width, height, 0, gl.RED, gl.UNSIGNED_SHORT, height_data
-        )
-        stbi.image_free(height_data)
-
-        planet_heightmaps[body.name] = height_tex
-        fmt.printfln("loaded heightmap %s -> id %i", height_filename, height_tex)
-         
-        color_data := stbi.load(color_filename, &width, &height, &channels, 0)
-        if color_data == nil{
-            fmt.printfln("could not open colormap %s: %s", color_filename, stbi.failure_reason())
-            continue
-        }
-        gl.GenTextures(1, &color_tex)
-
-        gl.BindTexture(gl.TEXTURE_2D, color_tex) 
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
-        gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-
-        gl.TexImage2D(
-            gl.TEXTURE_2D, 
-            0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, color_data 
-        )
-        stbi.image_free(color_data)
-
-        planet_colormaps[body.name] = color_tex
-        fmt.printfln("loaded colormap %s -> id %i", color_filename, color_tex)
-
-    }
-
-    suns := []^celestial_body{&chongus}
-
-    VERTEX_SHADER_PATH :: "shaders/billboard.vert.glsl"
-    FRAGMENT_SHADER_PATH :: "shaders/planet.frag.glsl"
-
-    stat, err := os.stat(FRAGMENT_SHADER_PATH)
-    last_modification := stat.modification_time
-   
-    last_frame_time, current_frame_time: u64 = sdl3.GetPerformanceCounter(), sdl3.GetPerformanceCounter()
-
-    fps_log_timer : f64= 0
-    fps_counter : u32 = 0
-
-    loop:
-    for{
-        if stat, err = os.stat(FRAGMENT_SHADER_PATH); time.diff(last_modification, stat.modification_time) != 0{
-            planet_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
-            planet_shader_uniforms:= gl.get_uniforms_from_program(star_shader)
-
-            if !ok {
-                a, b, c, d := gl.get_last_error_messages()
-                fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
-            }else{
-                fmt.printfln("Shaders reloaded")
-            }
-            last_modification = stat.modification_time
-        }
-
-        current_frame_time := sdl3.GetPerformanceCounter() 
-        delta_t := f64(current_frame_time - last_frame_time)/f64(sdl3.GetPerformanceFrequency())
-        last_frame_time = current_frame_time 
-
-        fps_log_timer += delta_t
-        fps_counter += 1
-        if(fps_log_timer > 1.0){
-            sdl3.Log("FPS: %i", fps_counter)
-            fps_counter = 0
-            fps_log_timer = 0
-        }
-
-        event : sdl3.Event
-        for sdl3.PollEvent(&event){
-            #partial switch(event.type){
-                case .QUIT:
-                    break loop
-                case .KEY_UP:
-                    switch(event.key.key){
-                    case sdl3.K_W: main_camera.velocity.z = 0
-                    case sdl3.K_A: main_camera.velocity.x = 0
-                    case sdl3.K_S: main_camera.velocity.z = 0
-                    case sdl3.K_D: main_camera.velocity.x = 0
-                    
-                    case sdl3.K_SPACE: main_camera.velocity.y = 0
-                    case sdl3.K_C: main_camera.velocity.y = 0
-                    
-                    case sdl3.K_Z: main_camera.fov = 90 
-
-                    case sdl3.K_F6: gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
-                    case sdl3.K_F7: gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
-                        
-                    case sdl3.K_ESCAPE:
-                        _ = sdl3.SetWindowRelativeMouseMode(window, !sdl3.GetWindowRelativeMouseMode(window))
-                    }
-                case .KEY_DOWN:
-                    switch(event.key.key){
-                    case sdl3.K_W: main_camera.velocity.z = -0.3
-                    case sdl3.K_A: main_camera.velocity.x = -0.3
-                    case sdl3.K_S: main_camera.velocity.z = 0.3
-                    case sdl3.K_D: main_camera.velocity.x = 0.3
-
-                    case sdl3.K_SPACE: main_camera.velocity.y = 0.1
-                    case sdl3.K_C: main_camera.velocity.y =    -0.1
-                    
-                    case sdl3.K_Z: main_camera.fov = 20
-                    }
-                case .MOUSE_MOTION:
-                    if(sdl3.GetWindowRelativeMouseMode(window)){
-                        main_camera.yaw   += cast(f32)event.motion.xrel * 0.2
-                        main_camera.pitch -= cast(f32)event.motion.yrel * 0.2
-                        main_camera.pitch = math.clamp(main_camera.pitch, -89.9, 89.9)
-                    }
-
-                case .WINDOW_RESIZED:
-                    sdl3.GetWindowSize(window, &width, &height)
-                    gl.Viewport(0, 0, width, height)
-                
-            }
-        }
-        
-
-        
-        
-        model := glm.identity(glm.mat4)
-        view := camera_update(&main_camera, f32(delta_t) * 165) 
-        projection := glm.mat4PerspectiveInfinite(main_camera.fov * math.RAD_PER_DEG, f32(width)/f32(height), 0.01)
+	ship_mesh, success := mesh_load("rocket.glb")
+	if (!success) {
+		return
+	}
+	// for key, uniform in planet_shader_uniforms{
+	//     sdl3.Log("%s - %i", uniform.name, uniform.location)
+	// }
 
 
+	sdl3.GetWindowSize(window, &width, &height)
 
-        // main_camera.position = mars.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*2, 0, -math.sin( math.to_radians(main_camera.yaw) )*2}
-        
-        gl.ClearColor(0.0, 0.0, 0.0, 1.0)
-        gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-   
-        gl.Disable(gl.DEPTH_TEST)
+	main_camera = {
+		position = {10.0, 0, 30.0},
+		yaw      = 90,
+		fov      = 90,
+	}
 
-        gl.UseProgram(background_shader)
-        
-        gl.Uniform2f(background_shader_uniforms["resolution"].location, f32(width), f32(height))
-        gl.Uniform3fv(background_shader_uniforms["camera_dir"].location, 1, &main_camera.front[0])
-        gl.Uniform1i(background_shader_uniforms["skybox"].location, 0)
-        
-        gl.BindVertexArray(quad_vao)
-        gl.ActiveTexture(gl.TEXTURE0)
-        gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
+	earth := celestial_body {
+		type = .ROCKY_PLANET,
+		name = "Earth",
+		physic_body = {position = {600, 0, 0}, velocity = {0.0, 0, 0}, mass = 2000},
+		radius = 200,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 0.03,
+		primary_color = {0.1, 0.6, 0.2},
+		secondary_color = {0.776, 0.69, 0.239},
+		has_sea = true,
+		sea_color = {0, 0, 0.8},
+		has_atmosphere = true,
+		atmosphere_radius = 300,
+		rayleigh_coefficient = {0, 0, 0.8},
+	}
 
-        gl.DrawArrays(gl.TRIANGLES, 0, 6)
-        
-        // gl.Enable(gl.DEPTH_TEST)
-        
+	mars := celestial_body {
+		type = .ROCKY_PLANET,
+		name = "Mars",
+		physic_body = {position = {0, 0, 55}, velocity = {3.5, 0, 0}, mass = 1.5},
+		radius = 0.5,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 2.0,
+		primary_color = {0.8, 0.2, 0.2},
+		secondary_color = {0.776, 0.69, 0.239},
+		has_sea = false,
+		sea_color = {0, 0, 0.8},
+		has_atmosphere = true,
+		atmosphere_radius = 1.0,
+		rayleigh_coefficient = {0.8, 0, 0},
+	}
 
-        time := f32(sdl3.GetTicks())/1000.0;
+	mercury := celestial_body {
+		type = .ROCKY_PLANET,
+		name = "Mercury",
+		physic_body = {position = {0, 0, 30}, velocity = {6.0, 0, 0}, mass = 1.0},
+		radius = 0.5,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 0.05,
+		primary_color = {0.4, 0.4, 0.4},
+		secondary_color = {0.776, 0.69, 0.239},
+		has_sea = false,
+		has_atmosphere = false,
+	}
+
+	sun := celestial_body {
+		type = .STAR,
+		name = "Sun",
+		physic_body = {position = {5.0, 0, 0}, velocity = {0, 0, -5.0}, mass = 150.0},
+		radius = 4.0,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 1.0,
+		primary_color = blackbody_radiation(5000, false).xyz,
+		temperature = 5000.0,
+		luminosity = 500.0,
+	}
+	solus := celestial_body {
+		type = .STAR,
+		name = "Solus",
+		physic_body = {position = {-5.0, -1000.0, 0}, velocity = {0, 0, 5.0}, mass = 100.0},
+		radius = 3.0,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 1.0,
+		primary_color = blackbody_radiation(30000, false).xyz,
+		temperature = 30000.0,
+		luminosity = 100.0,
+	}
+
+	chongus := celestial_body {
+		type = .STAR,
+		name = "Chongus",
+		physic_body = {position = {0, 0, 149597870.0}, velocity = {0, 0, 5.0}, mass = 1e10},
+		radius = 695508.0,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 1.0,
+		primary_color = blackbody_radiation(5000, false).xyz,
+		luminosity = 149597870 * 149597870 * 3.0,
+		temperature = 5000.0,
+	}
+
+	moon := celestial_body {
+		type = .ROCKY_PLANET,
+		name = "Moon",
+		physic_body = {position = {0, 0, 384400000.0}, velocity = {6.0, 0, 0}, mass = 1.0},
+		radius = 1737500.0,
+		rotation_axis = {0, 1.0, 0},
+		rotation_speed = 0.05,
+		primary_color = {0.4, 0.4, 0.4},
+		secondary_color = {0.776, 0.69, 0.239},
+		has_sea = false,
+		has_atmosphere = false,
+	}
+
+	bodies: []^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
+
+	for body in bodies {
+		if (body.type != .ROCKY_PLANET) do continue
+
+		height_filename := fmt.caprintf(
+			"textures/%s_height.png",
+			strings.to_lower(body.name, context.temp_allocator),
+		)
+		color_filename := fmt.caprintf(
+			"textures/%s_color.png",
+			strings.to_lower(body.name, context.temp_allocator),
+		)
+		height_tex, color_tex: u32
+
+		width, height, channels: c.int
+
+		height_data := stbi.load_16(height_filename, &width, &height, &channels, 0)
+		if height_data == nil {
+			fmt.printfln("could not open heightmap %s: %s", height_filename, stbi.failure_reason())
+			continue
+		}
+
+		gl.GenTextures(1, &height_tex)
+
+		gl.BindTexture(gl.TEXTURE_2D, height_tex)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+		gl.TexImage2D(
+			gl.TEXTURE_2D,
+			0,
+			gl.R16,
+			width,
+			height,
+			0,
+			gl.RED,
+			gl.UNSIGNED_SHORT,
+			height_data,
+		)
+		stbi.image_free(height_data)
+
+		planet_heightmaps[body.name] = height_tex
+		fmt.printfln("loaded heightmap %s -> id %i", height_filename, height_tex)
+
+		color_data := stbi.load(color_filename, &width, &height, &channels, 0)
+		if color_data == nil {
+			fmt.printfln("could not open colormap %s: %s", color_filename, stbi.failure_reason())
+			continue
+		}
+		gl.GenTextures(1, &color_tex)
+
+		gl.BindTexture(gl.TEXTURE_2D, color_tex)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+		gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+
+		gl.TexImage2D(
+			gl.TEXTURE_2D,
+			0,
+			gl.RGBA,
+			width,
+			height,
+			0,
+			gl.RGBA,
+			gl.UNSIGNED_BYTE,
+			color_data,
+		)
+		stbi.image_free(color_data)
+
+		planet_colormaps[body.name] = color_tex
+		fmt.printfln("loaded colormap %s -> id %i", color_filename, color_tex)
+
+	}
+
+	suns := []^celestial_body{&chongus}
+
+	VERTEX_SHADER_PATH :: "shaders/billboard.vert.glsl"
+	FRAGMENT_SHADER_PATH :: "shaders/planet.frag.glsl"
+
+	stat, err := os.stat(FRAGMENT_SHADER_PATH)
+	last_modification := stat.modification_time
+
+	last_frame_time, current_frame_time: u64 =
+		sdl3.GetPerformanceCounter(), sdl3.GetPerformanceCounter()
+
+	fps_log_timer: f64 = 0
+	fps_counter: u32 = 0
 
 
-        sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int{
-            return (glm.distance(a.physic_body.position, main_camera.position) > glm.distance(b.physic_body.position, main_camera.position))? -1 : 0;
-        })
+	loop: for {
+		if stat, err = os.stat(FRAGMENT_SHADER_PATH);
+		   time.diff(last_modification, stat.modification_time) != 0 {
+			planet_shader, ok = gl.load_shaders_file(VERTEX_SHADER_PATH, FRAGMENT_SHADER_PATH)
+			planet_shader_uniforms := gl.get_uniforms_from_program(star_shader)
+
+			if !ok {
+				a, b, c, d := gl.get_last_error_messages()
+				fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
+			} else {
+				fmt.printfln("Shaders reloaded")
+			}
+			last_modification = stat.modification_time
+		}
+
+		current_frame_time := sdl3.GetPerformanceCounter()
+		delta_t := f64(current_frame_time - last_frame_time) / f64(sdl3.GetPerformanceFrequency())
+		last_frame_time = current_frame_time
+
+		fps_log_timer += delta_t
+		fps_counter += 1
+		if (fps_log_timer > 1.0) {
+			sdl3.Log("FPS: %i", fps_counter)
+			fps_counter = 0
+			fps_log_timer = 0
+		}
+
+		event: sdl3.Event
+		for sdl3.PollEvent(&event) {
+			#partial switch (event.type) {
+			case .QUIT:
+				break loop
+			case .KEY_UP:
+				switch (event.key.key) {
+				case sdl3.K_W:
+					main_camera.velocity.z = 0
+				case sdl3.K_A:
+					main_camera.velocity.x = 0
+				case sdl3.K_S:
+					main_camera.velocity.z = 0
+				case sdl3.K_D:
+					main_camera.velocity.x = 0
+
+				case sdl3.K_SPACE:
+					main_camera.velocity.y = 0
+				case sdl3.K_C:
+					main_camera.velocity.y = 0
+
+				case sdl3.K_Z:
+					main_camera.fov = 90
+
+				case sdl3.K_F6:
+					gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE)
+				case sdl3.K_F7:
+					gl.PolygonMode(gl.FRONT_AND_BACK, gl.FILL)
+
+				case sdl3.K_ESCAPE:
+					_ = sdl3.SetWindowRelativeMouseMode(
+						window,
+						!sdl3.GetWindowRelativeMouseMode(window),
+					)
+				}
+			case .KEY_DOWN:
+				switch (event.key.key) {
+				case sdl3.K_W:
+					main_camera.velocity.z = -0.3
+				case sdl3.K_A:
+					main_camera.velocity.x = -0.3
+				case sdl3.K_S:
+					main_camera.velocity.z = 0.3
+				case sdl3.K_D:
+					main_camera.velocity.x = 0.3
+
+				case sdl3.K_SPACE:
+					main_camera.velocity.y = 0.1
+				case sdl3.K_C:
+					main_camera.velocity.y = -0.1
+
+				case sdl3.K_Z:
+					main_camera.fov = 20
+				}
+			case .MOUSE_MOTION:
+				if (sdl3.GetWindowRelativeMouseMode(window)) {
+					main_camera.yaw += cast(f32)event.motion.xrel * 0.2
+					main_camera.pitch -= cast(f32)event.motion.yrel * 0.2
+					main_camera.pitch = math.clamp(main_camera.pitch, -89.9, 89.9)
+				}
+
+			case .WINDOW_RESIZED:
+				sdl3.GetWindowSize(window, &width, &height)
+				gl.Viewport(0, 0, width, height)
+
+			}
+		}
 
 
-        for body in &bodies{
-            // if(body != &sun){
-            //     apply_gravity(&body.physic_body, &sun.physic_body)
-            //     apply_velocity(&body.physic_body, 1.0/165.0)
-            // }
-
-            for other_body in &bodies{
-                if(other_body != body){
-                    apply_gravity(&body.physic_body, &other_body.physic_body, f32(delta_t))
-                }
-            }
-            apply_velocity(&body.physic_body, f32(delta_t))
-
-            // if(body == &earth){
-            //     main_camera.position = earth.physic_body.position + 300 * glm.normalize(
-            // [3]f32{-math.cos(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch)),
-            //        -math.sin(glm.radians(main_camera.pitch)),
-            //        -math.sin(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch))})
-            // }
-
-            draw_celestial_body(body, &main_camera, time, width, height, suns, &view, &projection)
-        }
+		model := glm.identity(glm.mat4)
+		view := camera_update(&main_camera, f32(delta_t) * 165)
+		projection := glm.mat4PerspectiveInfinite(
+			main_camera.fov * math.RAD_PER_DEG,
+			f32(width) / f32(height),
+			0.01,
+		)
 
 
-        gl.Enable(gl.DEPTH_TEST)
-        gl.CullFace(gl.BACK)
-        // mesh_draw(&ship_mesh, &model, &view, &projection)
-        gl.CullFace(gl.FRONT)
+		// main_camera.position = mars.physic_body.position + vec3{-math.cos(math.to_radians(main_camera.yaw))*2, 0, -math.sin( math.to_radians(main_camera.yaw) )*2}
 
-        sdl3.GL_SwapWindow(window)
-    }
+		gl.ClearColor(0.0, 0.0, 0.0, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		gl.Disable(gl.DEPTH_TEST)
+
+		gl.UseProgram(background_shader)
+
+		gl.Uniform2f(background_shader_uniforms["resolution"].location, f32(width), f32(height))
+		gl.Uniform3fv(background_shader_uniforms["camera_dir"].location, 1, &main_camera.front[0])
+		gl.Uniform1i(background_shader_uniforms["skybox"].location, 0)
+
+		gl.BindVertexArray(quad_vao)
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_CUBE_MAP, skybox_tex_id)
+
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+		// gl.Enable(gl.DEPTH_TEST)
+
+
+		time := f32(sdl3.GetTicks()) / 1000.0
+
+
+		sort.quick_sort_proc(bodies, proc(a: ^celestial_body, b: ^celestial_body) -> int {
+			return(
+				(glm.distance(a.physic_body.position, main_camera.position) > glm.distance(b.physic_body.position, main_camera.position)) ? -1 : 0 \
+			)
+		})
+
+
+		for body in &bodies {
+			// if(body != &sun){
+			//     apply_gravity(&body.physic_body, &sun.physic_body)
+			//     apply_velocity(&body.physic_body, 1.0/165.0)
+			// }
+
+			for other_body in &bodies {
+				if (other_body != body) {
+					apply_gravity(&body.physic_body, &other_body.physic_body, f32(delta_t))
+				}
+			}
+			apply_velocity(&body.physic_body, f32(delta_t))
+
+			// if(body == &earth){
+			//     main_camera.position = earth.physic_body.position + 300 * glm.normalize(
+			// [3]f32{-math.cos(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch)),
+			//        -math.sin(glm.radians(main_camera.pitch)),
+			//        -math.sin(glm.radians(main_camera.yaw)) * math.cos(glm.radians(-main_camera.pitch))})
+			// }
+
+			draw_celestial_body(body, &main_camera, time, width, height, suns, &view, &projection)
+		}
+
+
+		gl.Enable(gl.DEPTH_TEST)
+		gl.CullFace(gl.BACK)
+		// mesh_draw(&ship_mesh, &model, &view, &projection)
+		gl.CullFace(gl.FRONT)
+
+		sdl3.GL_SwapWindow(window)
+	}
 }
 
 
-blackbody_radiation :: proc(T: f32, bComputeRadiance: bool) -> vec4{
+blackbody_radiation :: proc(T: f32, bComputeRadiance: bool) -> vec4 {
 
-    ChromaRadiance := vec4{0.0, 0.0, 0.0, 0.0};
-    
-    // --- Effective radiance in W/(sr*m2) ---
-    if(bComputeRadiance){
-        ChromaRadiance.a = 230141698.067 / (math.exp(25724.2/T) - 1.0);
-    }
-    
-    // luminance Lv = Km*ChromaRadiance.a in cd/m2, where Km = 683.002 lm/W
-    
-    // --- Chromaticity in linear sRGB ---
-    // (i.e. color luminance Y = dot({r,g,b}, {0.2126, 0.7152, 0.0722}) = 1)
-    // --- R ---
-    u := 0.000536332*T
-    ChromaRadiance.r = 0.638749 + (u + 1.57533) / (u*u + 0.28664);
-    
-    // --- G ---
-    u = 0.0019639*T;
-    ChromaRadiance.g = 0.971029 + (u - 10.8015) / (u*u + 6.59002);
-    
-    // --- B ---
-    p := 0.00668406*T + 23.3962;
-    u = 0.000941064*T;
-    q := u*u + 0.00100641*T + 10.9068;
-    ChromaRadiance.b = 2.25398 - p/q;
-    
-    return ChromaRadiance;
+	ChromaRadiance := vec4{0.0, 0.0, 0.0, 0.0}
+
+	// --- Effective radiance in W/(sr*m2) ---
+	if (bComputeRadiance) {
+		ChromaRadiance.a = 230141698.067 / (math.exp(25724.2 / T) - 1.0)
+	}
+
+	// luminance Lv = Km*ChromaRadiance.a in cd/m2, where Km = 683.002 lm/W
+
+	// --- Chromaticity in linear sRGB ---
+	// (i.e. color luminance Y = dot({r,g,b}, {0.2126, 0.7152, 0.0722}) = 1)
+	// --- R ---
+	u := 0.000536332 * T
+	ChromaRadiance.r = 0.638749 + (u + 1.57533) / (u * u + 0.28664)
+
+	// --- G ---
+	u = 0.0019639 * T
+	ChromaRadiance.g = 0.971029 + (u - 10.8015) / (u * u + 6.59002)
+
+	// --- B ---
+	p := 0.00668406 * T + 23.3962
+	u = 0.000941064 * T
+	q := u * u + 0.00100641 * T + 10.9068
+	ChromaRadiance.b = 2.25398 - p / q
+
+	return ChromaRadiance
 }
 
-draw_celestial_body :: proc(body: ^celestial_body, camera: ^camera, time: f32, width, height : i32, suns: []^celestial_body, view : ^glm.mat4, projection : ^glm.mat4){
+draw_celestial_body :: proc(
+	body: ^celestial_body,
+	camera: ^camera,
+	time: f32,
+	width, height: i32,
+	suns: []^celestial_body,
+	view: ^glm.mat4,
+	projection: ^glm.mat4,
+) {
 
-    uniforms : ^map[string]gl.Uniform_Info
+	uniforms: ^map[string]gl.Uniform_Info
 
-    #partial switch(body.type){
-        case .ROCKY_PLANET:
-            gl.UseProgram(planet_shader) 
-            uniforms = &planet_shader_uniforms
-        case .STAR:
-            gl.UseProgram(star_shader) 
-            uniforms = &star_shader_uniforms
-    }
+	#partial switch (body.type) {
+	case .ROCKY_PLANET:
+		gl.UseProgram(planet_shader)
+		uniforms = &planet_shader_uniforms
+	case .STAR:
+		gl.UseProgram(star_shader)
+		uniforms = &star_shader_uniforms
+	}
 
-    model := glm.identity(glm.mat4)
-    model *= glm.mat4Translate(body.physic_body.position)
-    model *= glm.mat4Rotate({0, 1.0, 0}, -glm.radians(camera.yaw) - glm.PI/2.0)
-    model *= glm.mat4Rotate({1.0, 0.0, 0}, glm.radians(camera.pitch))
-    r := body.atmosphere_radius
+	model := glm.identity(glm.mat4)
+	model *= glm.mat4Translate(body.physic_body.position)
+	model *= glm.mat4Rotate({0, 1.0, 0}, -glm.radians(camera.yaw) - glm.PI / 2.0)
+	model *= glm.mat4Rotate({1.0, 0.0, 0}, glm.radians(camera.pitch))
+	r := body.atmosphere_radius
 
-    if(body.type == .STAR) do r = body.radius * 8.0;
-    // glm.mat4LookAt(body.physic_body.position, camera.)
-    
-    r *= 1.2
-    model *= glm.mat4Scale({r, r, r})
-    
+	if (body.type == .STAR) do r = body.radius * 8.0
+	// glm.mat4LookAt(body.physic_body.position, camera.)
+
+	r *= 1.2
+	model *= glm.mat4Scale({r, r, r})
 
 
-    gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0,0])
-    gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0,0])
-    gl.UniformMatrix4fv(mesh_shader_uniforms["model"].location, 1, gl.FALSE, &model[0,0])
-    
-    gl.Uniform2f(uniforms["resolution"].location, f32(width), f32(height))
-    gl.Uniform1f(uniforms["time"].location, time)
-    gl.Uniform3fv(uniforms["camera_pos"].location, 1, &camera.position[0])
-    gl.Uniform3fv(uniforms["camera_dir"].location, 1, &camera.front[0])
-   
-    //physical params
-    gl.Uniform3fv(uniforms["body_origin"].location, 1, &body.physic_body.position[0])
-    gl.Uniform1f(uniforms["body_radius"].location, body.radius)
-    gl.Uniform3fv(uniforms["body_axis"].location, 1, &body.rotation_axis[0])
-    gl.Uniform1f(uniforms["body_rotation_speed"].location, body.rotation_speed)
-   
-    //color params
-    gl.Uniform3fv(uniforms["body_color1"].location, 1, &body.primary_color[0])
-    gl.Uniform3fv(uniforms["body_color2"].location, 1, &body.secondary_color[0])
-    
-    // gl.Uniform3fv(uniforms["sun_position"].location, 1, &sun_position[0])
+	gl.UniformMatrix4fv(mesh_shader_uniforms["proj"].location, 1, gl.FALSE, &projection[0, 0])
+	gl.UniformMatrix4fv(mesh_shader_uniforms["view"].location, 1, gl.FALSE, &view[0, 0])
+	gl.UniformMatrix4fv(mesh_shader_uniforms["model"].location, 1, gl.FALSE, &model[0, 0])
 
-    if(body.type == .ROCKY_PLANET){
-        light_positions : [8*3]f32
-        light_colors : [8*4]f32
-        for i := 0; i < 8; i+=1{
-            light_positions[3*i]     = (i < len(suns))? suns[i].physic_body.position.x: 0
-            light_positions[3*i + 1] = (i < len(suns))? suns[i].physic_body.position.y: 0
-            light_positions[3*i + 2] = (i < len(suns))? suns[i].physic_body.position.z: 0
+	gl.Uniform2f(uniforms["resolution"].location, f32(width), f32(height))
+	gl.Uniform1f(uniforms["time"].location, time)
+	gl.Uniform3fv(uniforms["camera_pos"].location, 1, &camera.position[0])
+	gl.Uniform3fv(uniforms["camera_dir"].location, 1, &camera.front[0])
 
-            light_colors[4*i]     = (i < len(suns))? suns[i].primary_color.x: 0
-            light_colors[4*i + 1] = (i < len(suns))? suns[i].primary_color.y: 0
-            light_colors[4*i + 2] = (i < len(suns))? suns[i].primary_color.z: 0
-            light_colors[4*i + 3] = (i < len(suns))? suns[i].luminosity: 0
-        }
-        gl.Uniform3fv(gl.GetUniformLocation(planet_shader, "light_positions"), 8, &light_positions[0])
-        gl.Uniform4fv(gl.GetUniformLocation(planet_shader, "light_colors"), 8, &light_colors[0])
+	//physical params
+	gl.Uniform3fv(uniforms["body_origin"].location, 1, &body.physic_body.position[0])
+	gl.Uniform1f(uniforms["body_radius"].location, body.radius)
+	gl.Uniform3fv(uniforms["body_axis"].location, 1, &body.rotation_axis[0])
+	gl.Uniform1f(uniforms["body_rotation_speed"].location, body.rotation_speed)
 
-        //sea params
-        gl.Uniform1i(uniforms["planet_has_sea"].location, i32(body.has_sea))
-        if(body.has_sea){
-            gl.Uniform3fv(uniforms["planet_sea_color"].location, 1, &body.sea_color[0])
-        }
-       
-        //atmosphere params
-        gl.Uniform1i(uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
-        if(body.has_atmosphere){
-            gl.Uniform1f(uniforms["planet_atmosphere_radius"].location, body.atmosphere_radius)
-            gl.Uniform3fv(uniforms["planet_atmosphere_color"].location, 1, &body.rayleigh_coefficient[0])
-        }
+	//color params
+	gl.Uniform3fv(uniforms["body_color1"].location, 1, &body.primary_color[0])
+	gl.Uniform3fv(uniforms["body_color2"].location, 1, &body.secondary_color[0])
 
-        colormap := planet_colormaps[body.name] or_else planet_colormaps["Earth"]
-        heightmap := planet_heightmaps[body.name] or_else planet_heightmaps["Earth"]
+	// gl.Uniform3fv(uniforms["sun_position"].location, 1, &sun_position[0])
 
-        gl.Uniform1i(uniforms["colormap"].location, 0)
-        gl.Uniform1i(uniforms["heightmap"].location, 1)
-        
-        gl.ActiveTexture(gl.TEXTURE0)
-        gl.BindTexture(gl.TEXTURE_2D, colormap)
-        gl.ActiveTexture(gl.TEXTURE1)
-        gl.BindTexture(gl.TEXTURE_2D, heightmap)
-    }
+	if (body.type == .ROCKY_PLANET) {
+		light_positions: [8 * 3]f32
+		light_colors: [8 * 4]f32
+		for i := 0; i < 8; i += 1 {
+			light_positions[3 * i] = (i < len(suns)) ? suns[i].physic_body.position.x : 0
+			light_positions[3 * i + 1] = (i < len(suns)) ? suns[i].physic_body.position.y : 0
+			light_positions[3 * i + 2] = (i < len(suns)) ? suns[i].physic_body.position.z : 0
 
-    gl.BindVertexArray(quad_vao)
-    gl.DrawArrays(gl.TRIANGLES, 0, 6)
+			light_colors[4 * i] = (i < len(suns)) ? suns[i].primary_color.x : 0
+			light_colors[4 * i + 1] = (i < len(suns)) ? suns[i].primary_color.y : 0
+			light_colors[4 * i + 2] = (i < len(suns)) ? suns[i].primary_color.z : 0
+			light_colors[4 * i + 3] = (i < len(suns)) ? suns[i].luminosity : 0
+		}
+		gl.Uniform3fv(
+			gl.GetUniformLocation(planet_shader, "light_positions"),
+			8,
+			&light_positions[0],
+		)
+		gl.Uniform4fv(gl.GetUniformLocation(planet_shader, "light_colors"), 8, &light_colors[0])
+
+		//sea params
+		gl.Uniform1i(uniforms["planet_has_sea"].location, i32(body.has_sea))
+		if (body.has_sea) {
+			gl.Uniform3fv(uniforms["planet_sea_color"].location, 1, &body.sea_color[0])
+		}
+
+		//atmosphere params
+		gl.Uniform1i(uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
+		if (body.has_atmosphere) {
+			gl.Uniform1f(uniforms["planet_atmosphere_radius"].location, body.atmosphere_radius)
+			gl.Uniform3fv(
+				uniforms["planet_atmosphere_color"].location,
+				1,
+				&body.rayleigh_coefficient[0],
+			)
+		}
+
+		colormap := planet_colormaps[body.name] or_else planet_colormaps["Earth"]
+		heightmap := planet_heightmaps[body.name] or_else planet_heightmaps["Earth"]
+
+		gl.Uniform1i(uniforms["colormap"].location, 0)
+		gl.Uniform1i(uniforms["heightmap"].location, 1)
+
+		gl.ActiveTexture(gl.TEXTURE0)
+		gl.BindTexture(gl.TEXTURE_2D, colormap)
+		gl.ActiveTexture(gl.TEXTURE1)
+		gl.BindTexture(gl.TEXTURE_2D, heightmap)
+	}
+
+	gl.BindVertexArray(quad_vao)
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
 
 }
 G :: 1.65
-apply_gravity :: proc(body_a : ^body, body_b: ^body, delta_t: f32){
-    distance := glm.distance(body_a.position, body_b.position)
-    force := (G * body_a.mass * body_b.mass) / (distance * distance)
-    direction := glm.normalize(body_b.position - body_a.position)
-    body_a.velocity +=  direction * (force/body_a.mass) * delta_t
-    body_b.velocity += -direction * (force/body_b.mass) * delta_t
+apply_gravity :: proc(body_a: ^body, body_b: ^body, delta_t: f32) {
+	distance := glm.distance(body_a.position, body_b.position)
+	force := (G * body_a.mass * body_b.mass) / (distance * distance)
+	direction := glm.normalize(body_b.position - body_a.position)
+	body_a.velocity += direction * (force / body_a.mass) * delta_t
+	body_b.velocity += -direction * (force / body_b.mass) * delta_t
 }
-apply_velocity :: proc(body: ^body, delta_t: f32){
-    body.position += body.velocity * delta_t
+apply_velocity :: proc(body: ^body, delta_t: f32) {
+	body.position += body.velocity * delta_t
 }
