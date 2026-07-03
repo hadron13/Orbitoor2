@@ -45,13 +45,15 @@ celestial_body :: struct {
 	primary_color:        vec3,
 	secondary_color:      vec3,
 	has_atmosphere:       bool,
-	atmosphere_radius:    f32,
+	atmosphere_height:    f32,
 	atmospheric_density:  f32,
 	rayleigh_coefficient: vec3,
 	mie_coefficient:      vec3,
 	has_sea:              bool,
 	sea_threshold:        f32,
 	sea_color:            vec3,
+	transmittance_lut:	  u32,
+	multiscatter_lut: 	  u32
 }
 
 mesh :: struct {
@@ -256,25 +258,16 @@ main :: proc() {
 
 	ok: bool
 	for i := 0; i < len(shader_programs); i += 1 {
-		shader_programs[i]^, ok = gl.load_shaders_file(
-			vertex_shader_paths[i],
-			fragment_shader_paths[i],
-		)
-		shader_uniforms[i]^ = gl.get_uniforms_from_program(shader_programs[i]^)
-
-		if !ok {
-			a, b, c, d := gl.get_last_error_messages()
-			fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
-			return
-		} else {
-			fmt.printfln("Shaders %s %s loaded", vertex_shader_paths[i], fragment_shader_paths[i])
-		}
+		shader_programs[i]^, shader_uniforms[i]^, ok = shader_compile(vertex_shader_paths[i], fragment_shader_paths[i]);
 	}
 
 	ship_mesh, success := mesh_load("rocket.glb")
 	if (!success) {
 		return
 	}
+
+	scattering_precompute_init()
+
 	// for key, uniform in planet_shader_uniforms{
 	//     sdl3.Log("%s - %i", uniform.name, uniform.location)
 	// }
@@ -300,9 +293,11 @@ main :: proc() {
 		has_sea = true,
 		sea_color = {0, 0, 0.8},
 		has_atmosphere = true,
-		atmosphere_radius = 300,
+		atmosphere_height = 300,
 		rayleigh_coefficient = {0, 0, 0.8},
 	}
+
+	scattering_precompute_planet(&earth)
 
 	mars := celestial_body {
 		type = .ROCKY_PLANET,
@@ -316,7 +311,7 @@ main :: proc() {
 		has_sea = false,
 		sea_color = {0, 0, 0.8},
 		has_atmosphere = true,
-		atmosphere_radius = 1.0,
+		atmosphere_height = 1.0,
 		rayleigh_coefficient = {0.8, 0, 0},
 	}
 
@@ -381,7 +376,7 @@ main :: proc() {
 		has_atmosphere = false,
 	}
 
-	bodies: []^celestial_body = {&earth, &mars, &mercury, &sun, &solus, &chongus}
+	bodies: []^celestial_body = {&earth, &chongus}
 
 	for body in bodies {
 		if (body.type != .ROCKY_PLANET) do continue
@@ -700,7 +695,7 @@ draw_celestial_body :: proc(
 	model *= glm.mat4Translate(body.physic_body.position)
 	model *= glm.mat4Rotate({0, 1.0, 0}, -glm.radians(camera.yaw) - glm.PI / 2.0)
 	model *= glm.mat4Rotate({1.0, 0.0, 0}, glm.radians(camera.pitch))
-	r := body.atmosphere_radius
+	r := body.atmosphere_height
 
 	if (body.type == .STAR) do r = body.radius * 8.0
 	// glm.mat4LookAt(body.physic_body.position, camera.)
@@ -759,7 +754,7 @@ draw_celestial_body :: proc(
 		//atmosphere params
 		gl.Uniform1i(uniforms["planet_has_atmosphere"].location, i32(body.has_atmosphere))
 		if (body.has_atmosphere) {
-			gl.Uniform1f(uniforms["planet_atmosphere_radius"].location, body.atmosphere_radius)
+			gl.Uniform1f(uniforms["planet_atmosphere_radius"].location, body.atmosphere_height)
 			gl.Uniform3fv(
 				uniforms["planet_atmosphere_color"].location,
 				1,
