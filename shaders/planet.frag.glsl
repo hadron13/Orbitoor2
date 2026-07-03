@@ -176,165 +176,215 @@ uniform bool planet_has_atmosphere;
 uniform float planet_atmosphere_radius;
 uniform vec3 planet_atmosphere_color;
 
-// Scattering written by GLtracy
-// link: https://www.shadertoy.com/view/lslXDr
 
-// math const
-const float PI = 3.14159265359;
-const float MAX = 10000.0;
+uniform sampler2D transmittance_lut;
+uniform sampler2D multiscatter_lut;
 
-// ray intersects sphere
-// e = -b +/- sqrt( b^2 - c )
-vec2 ray_vs_sphere(vec3 p, vec3 dir, float r) {
-    float b = dot(p, dir);
-    float c = dot(p, p) - r * r;
+const float PI = 3.14159265358;
 
-    float d = b * b - c;
-    if (d < 0.0) {
-        return vec2(MAX, -MAX);
+// Units are in megameters.
+const float groundRadiusMM = 6.360;
+const float atmosphereRadiusMM = 6.460;
+
+// 200M above the ground.
+const vec3 viewPos = vec3(0.0, groundRadiusMM + 0.0002, 0.0);
+
+const vec2 tLUTRes = vec2(256.0, 64.0);
+const vec2 msLUTRes = vec2(32.0, 32.0);
+
+
+const vec3 groundAlbedo = vec3(0.3);
+
+// These are per megameter.
+const vec3 rayleighScatteringBase = vec3(5.802, 13.558, 33.1);
+const float rayleighAbsorptionBase = 0.0;
+
+const float mieScatteringBase = 3.996;
+const float mieAbsorptionBase = 4.4;
+
+const vec3 ozoneAbsorptionBase = vec3(0.650, 1.881, .085);
+
+
+float getMiePhase(float cosTheta) {
+    const float g = 0.8;
+    const float scale = 3.0/(8.0*PI);
+
+    float num = (1.0-g*g)*(1.0+cosTheta*cosTheta);
+    float denom = (2.0+g*g)*pow((1.0 + g*g - 2.0*g*cosTheta), 1.5);
+
+    return scale*num/denom;
+}
+
+float getRayleighPhase(float cosTheta) {
+    const float k = 3.0/(16.0*PI);
+    return k*(1.0+cosTheta*cosTheta);
+}
+
+void getScatteringValues(vec3 pos,
+                         out vec3 rayleighScattering,
+                         out float mieScattering,
+                         out vec3 extinction) {
+    float altitudeKM = (length(pos)-groundRadiusMM)*1000.0;
+    // Note: Paper gets these switched up.
+    float rayleighDensity = exp(-altitudeKM/8.0);
+    float mieDensity = exp(-altitudeKM/1.2);
+
+    rayleighScattering = rayleighScatteringBase*rayleighDensity;
+    float rayleighAbsorption = rayleighAbsorptionBase*rayleighDensity;
+
+    mieScattering = mieScatteringBase*mieDensity;
+    float mieAbsorption = mieAbsorptionBase*mieDensity;
+
+    vec3 ozoneAbsorption = ozoneAbsorptionBase*max(0.0, 1.0 - abs(altitudeKM-25.0)/15.0);
+
+    extinction = rayleighScattering + rayleighAbsorption + mieScattering + mieAbsorption + ozoneAbsorption;
+}
+
+float safeacos(const float x) {
+    return acos(clamp(x, -1.0, 1.0));
+}
+
+// From https://gamedev.stackexchange.com/questions/96459/fast-ray-sphere-collision-code.
+float rayIntersectSphere(vec3 ro, vec3 rd, float rad) {
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - rad*rad;
+    if (c > 0.0f && b > 0.0) return -1.0;
+    float discr = b*b - c;
+    if (discr < 0.0) return -1.0;
+    // Special case: inside sphere, use far discriminant
+    if (discr > b*b) return (-b + sqrt(discr));
+    return -b - sqrt(discr);
+}
+
+// From https://www.shadertoy.com/view/wlBXWK
+vec2 rayIntersectSphere2D(
+    vec3 start, // starting position of the ray
+    vec3 dir, // the direction of the ray
+    float radius // and the sphere radius
+) {
+    // ray-sphere intersection that assumes
+    // the sphere is centered at the origin.
+    // No intersection when result.x > result.y
+    float a = dot(dir, dir);
+    float b = 2.0 * dot(dir, start);
+    float c = dot(start, start) - (radius * radius);
+    float d = (b*b) - 4.0*a*c;
+    if (d < 0.0) return vec2(1e5,-1e5);
+    return vec2(
+        (-b - sqrt(d))/(2.0*a),
+        (-b + sqrt(d))/(2.0*a)
+    );
+}
+
+
+/*
+ * Same parameterization here.
+ */
+vec3 getValFromTLUT(sampler2D tex, vec2 bufferRes, vec3 pos, vec3 sunDir) {
+    float height = length(pos);
+    vec3 up = pos / height;
+	float sunCosZenithAngle = dot(sunDir, up);
+    vec2 uv = vec2(tLUTRes.x*clamp(0.5 + 0.5*sunCosZenithAngle, 0.0, 1.0),
+                   tLUTRes.y*max(0.0, min(1.0, (height - groundRadiusMM)/(atmosphereRadiusMM - groundRadiusMM))));
+    uv /= bufferRes;
+    return texture(tex, uv).rgb;
+}
+vec3 getValFromMultiScattLUT(sampler2D tex, vec2 bufferRes, vec3 pos, vec3 sunDir) {
+    float height = length(pos);
+    vec3 up = pos / height;
+	float sunCosZenithAngle = dot(sunDir, up);
+    vec2 uv = vec2(msLUTRes.x*clamp(0.5 + 0.5*sunCosZenithAngle, 0.0, 1.0),
+                   msLUTRes.y*max(0.0, min(1.0, (height - groundRadiusMM)/(atmosphereRadiusMM - groundRadiusMM))));
+    uv /= bufferRes;
+    return texture(tex, uv).rgb;
+}
+
+
+
+vec3 raymarchScattering(sampler2D TLUT, vec2 TLUT_size, sampler2D MSLUT, vec2 MSLUT_size,
+                              vec3 viewPos,
+                              vec3 rayDir,
+                              vec3 sunDir,
+                              float numSteps,
+                              out vec3 transmittance) {
+
+
+    vec2 atmos_intercept = rayIntersectSphere2D(viewPos, rayDir, atmosphereRadiusMM);
+    float terra_intercept = rayIntersectSphere(viewPos, rayDir, groundRadiusMM);
+
+    float mindist, maxdist;
+
+    if (atmos_intercept.x < atmos_intercept.y){
+        // there is an atmosphere intercept!
+        // start at the closest atmosphere intercept
+        // trace the distance between the closest and farthest intercept
+        mindist = atmos_intercept.x > 0.0 ? atmos_intercept.x : 0.0;
+		maxdist = atmos_intercept.y > 0.0 ? atmos_intercept.y : 0.0;
+    } else {
+        // no atmosphere intercept means no atmosphere!
+        return vec3(0.0);
     }
-    d = sqrt(d);
 
-    return vec2(-b - d, -b + d);
-}
+    // if in the atmosphere start at the camera
+    if (length(viewPos) < atmosphereRadiusMM) mindist=0.0;
 
-// Mie
-// g : ( -0.75, -0.999 )
-//      3 * ( 1 - g^2 )               1 + c^2
-// F = ----------------- * -------------------------------
-//      8pi * ( 2 + g^2 )     ( 1 + g^2 - 2 * g * c )^(3/2)
-float phase_mie(float g, float c, float cc) {
-    float gg = g * g;
 
-    float a = (1.0 - gg) * (1.0 + cc);
-
-    float b = 1.0 + gg - 2.0 * g * c;
-    b *= sqrt(b);
-    b *= 2.0 + gg;
-
-    return (3.0 / 8.0 / PI) * a / b;
-}
-
-// Rayleigh
-// g : 0
-// F = 3/16PI * ( 1 + c^2 )
-float phase_ray(float cc) {
-    return (3.0 / 16.0 / PI) * (1.0 + cc);
-}
-
-// scatter const
-const float R_INNER = 1.0;
-const float R = R_INNER + 0.5;
-
-const int NUM_OUT_SCATTER = 4;
-const int NUM_IN_SCATTER = 32;
-
-float density(vec3 p, float ph) {
-    return exp(-max((length(p) - R_INNER) * 8.0, 0.0) / ph);
-}
-
-float optic(vec3 p, vec3 q, float ph) {
-    vec3 s = (q - p) / float(NUM_OUT_SCATTER);
-    vec3 v = p + s * 0.5;
-
-    float sum = 0.0;
-    for (int i = 0; i < NUM_OUT_SCATTER; i++) {
-        sum += density(v, ph);
-        v += s;
-    }
-    sum *= length(s);
-
-    return sum;
-}
-
-vec3 in_scatter(vec3 o, vec3 dir, vec2 e, vec3 l) {
-    const float ph_ray = 0.05;
-    const float ph_mie = 0.02;
-
-    const vec3 k_ray = vec3(3.8, 13.5, 33.1);
-    const vec3 k_mie = vec3(21.0);
-    const float k_mie_ex = 1.1;
-
-    vec3 sum_ray = vec3(0.0);
-    vec3 sum_mie = vec3(0.0);
-
-    float n_ray0 = 0.0;
-    float n_mie0 = 0.0;
-
-    float len = (e.y - e.x) / float(NUM_IN_SCATTER);
-    vec3 s = dir * len;
-    vec3 v = o + dir * (e.x + len * 0.5);
-
-    for (int i = 0; i < NUM_IN_SCATTER; i++, v += s) {
-        float d_ray = density(v, ph_ray) * len;
-        float d_mie = density(v, ph_mie) * len;
-
-        n_ray0 += d_ray;
-        n_mie0 += d_mie;
-
-        vec2 f = ray_vs_sphere(v, l, R);
-        vec3 u = v + l * f.y;
-
-        float n_ray1 = optic(v, u, ph_ray);
-        float n_mie1 = optic(v, u, ph_mie);
-
-        vec3 att = exp(-(n_ray0 + n_ray1) * k_ray - (n_mie0 + n_mie1) * k_mie * k_mie_ex);
-
-        sum_ray += d_ray * att;
-        sum_mie += d_mie * att;
+    // if there's a terra intercept that's closer than the atmosphere one,
+    // use that instead!
+    if (terra_intercept > 0.0){ // confirm valid intercepts
+        maxdist = terra_intercept;
     }
 
-    float c = dot(dir, -l);
-    float cc = c * c;
-    vec3 scatter =
-        sum_ray * k_ray * phase_ray(cc) +
-            sum_mie * k_mie * phase_mie(-0.78, c, cc);
+    // start marching at the min dist
+    vec3 pos = viewPos + mindist * rayDir;
 
-    return 15.0 * scatter;
+    float cosTheta = dot(rayDir, sunDir);
+
+	float miePhaseValue = getMiePhase(cosTheta);
+	float rayleighPhaseValue = getRayleighPhase(-cosTheta);
+
+    vec3 lum = vec3(0.0);
+    transmittance = vec3(1.0);
+    float t = 0.0;
+    for (float i = 0.0; i < numSteps; i += 1.0) {
+        float newT = ((i + 0.3)/numSteps)*(maxdist-mindist);
+        float dt = newT - t;
+        t = newT;
+
+        vec3 newPos = pos + t*rayDir;
+
+        vec3 rayleighScattering, extinction;
+        float mieScattering;
+
+        getScatteringValues(newPos, rayleighScattering, mieScattering, extinction);
+
+        vec3 sampleTransmittance = exp(-dt*extinction);
+
+        vec3 sunTransmittance = getValFromTLUT(TLUT, TLUT_size, newPos, sunDir);
+        vec3 psiMS = 0.0*getValFromMultiScattLUT(MSLUT, MSLUT_size, newPos, sunDir);
+
+        vec3 rayleighInScattering = rayleighScattering*(rayleighPhaseValue*sunTransmittance + psiMS);
+        vec3 mieInScattering = mieScattering*(miePhaseValue*sunTransmittance + psiMS);
+        vec3 inScattering = (rayleighInScattering + mieInScattering);
+
+        // Integrated scattering within path segment.
+        vec3 scatteringIntegral = (inScattering - inScattering * sampleTransmittance) / extinction;
+
+        lum += scatteringIntegral*transmittance;
+
+        transmittance *= sampleTransmittance;
+    }
+    return lum;
 }
 
-//
-//  // ----------------------------------------------------------------------------
-// float DistributionGGX(vec3 N, vec3 H, float roughness)
-// {
-//     float a = roughness*roughness;
-//     float a2 = a*a;
-//     float NdotH = max(dot(N, H), 0.0);
-//     float NdotH2 = NdotH*NdotH;
-//
-//     float nom   = a2;
-//     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-//     denom = PI * denom * denom;
-//
-//     return nom / denom;
-// }
-// // ----------------------------------------------------------------------------
-// float GeometrySchlickGGX(float NdotV, float roughness)
-// {
-//     float r = (roughness + 1.0);
-//     float k = (r*r) / 8.0;
-//
-//     float nom   = NdotV;
-//     float denom = NdotV * (1.0 - k) + k;
-//
-//     return nom / denom;
-// }
-// // ----------------------------------------------------------------------------
-// float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-// {
-//     float NdotV = max(dot(N, V), 0.0);
-//     float NdotL = max(dot(N, L), 0.0);
-//     float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-//     float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-//
-//     return ggx1 * ggx2;
-// }
-// // ----------------------------------------------------------------------------
-// vec3 fresnelSchlick(float cosTheta, vec3 F0)
-// {
-//     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-// }
-//
+
+vec3 jodieReinhardTonemap(vec3 c){
+    // From: https://www.shadertoy.com/view/tdSXzD
+    float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    vec3 tc = c / (c + 1.0);
+    return mix(c / (l + 1.0), tc, tc);
+}
+
 
 void main() {
     vec2 uv = gl_FragCoord.xy / resolution.y - vec2((resolution.x / resolution.y - 1.0) / 2.0, 0);
@@ -423,17 +473,19 @@ void main() {
 
     vec3 light_dir = normalize(light_positions[0] - body_origin);
 
-    vec3 eye = (ray_origin - body_origin) / body_radius;
+    vec3 eye = ((ray_origin - body_origin) / body_radius) * 6.360;
 
-    vec2 e = ray_vs_sphere(eye, ray_direction, R);
-    vec2 f = ray_vs_sphere(eye, ray_direction, R_INNER);
-    e.y = min(e.y, f.x);
-    vec3 scatter = in_scatter(eye, ray_direction, e, light_dir);
+    vec3 transmittance;
+    vec3 scatter = raymarchScattering(transmittance_lut, tLUTRes, multiscatter_lut, msLUTRes, eye, ray_direction, light_dir, 64.0, transmittance);
 
-    scatter = 1.0 - exp(-scatter);
+
+    // vec3 sunTransmittance = getValFromTLUT(TLUT, TLUT_size, newPos, sunDir);
+    // scatter = jodieReinhardTonemap(scatter);
 
     if (ground_intersection.y < 0.0) {
-        gl_FragColor = vec4(scatter, min(1.0, length(scatter)));
+        // gl_FragColor = vec4( length(eye) - 2.0, 0, 0, 1.0);
+        gl_FragColor = vec4(jodieReinhardTonemap(scatter * 20), step(0.0001, length(scatter)));
+        // gl_FragColor = vec4(atm_intersection.y / body_radius, 0, 0, 0.5);
     } else {
         vec3 cloud_point = intersection_point * vec3(1.5, 2.5, 1.5) + 40.0;
         float cloud_thickness = fbm(cloud_point + fbm(cloud_point * 0.75 + time / 100.0 + fbm(cloud_point * 0.25 - time / 200.0, 2), 3), 4) + max(0.0, fbm(cloud_point * 2.0, 5));
@@ -441,8 +493,12 @@ void main() {
         float cloud_factor = clamp(1.0 - exp(-3.0 * cloud_thickness), 0.0, 1.0);
         // cloud_factor = cloud_thickness;
 
-        gl_FragColor = vec4(mix(diffuse * mix(surface_color, vec3(1.0), 0.0), scatter, 0.7), 1.0);
+        vec3 ground_color = diffuse * mix(surface_color, vec3(1.0), 0.0);
+
+        vec3 combined_color = ground_color * transmittance + scatter * 20;
+
+        gl_FragColor = vec4(jodieReinhardTonemap(combined_color), 1.0);
     }
     // gl_FragColor = vec4(vec3(texture2D(heightmap, map_uv).r), 1.0);
-    // gl_FragColor = vec4(uv, 0, 1.0);
+    // gl_FragColor = vec4(centered_uv, 0, 1.0);
 }

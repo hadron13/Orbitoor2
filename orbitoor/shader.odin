@@ -12,13 +12,12 @@ shader_compile :: proc(vertex_shader_path, fragment_shader_path : string) -> (u3
 		vertex_shader_path,
 		fragment_shader_path,
 	)
-	shader_uniforms = gl.get_uniforms_from_program(shader_program)
 
-	if !ok {
-		a, b, c, d := gl.get_last_error_messages()
-		fmt.printfln("Could not compile shaders\n %s\n %s", a, c)
-	} else {
+	if ok {
 		fmt.printfln("Shaders %s %s loaded", vertex_shader_path, fragment_shader_path)
 	}
+
+	shader_uniforms = gl.get_uniforms_from_program(shader_program)
+
 	return shader_program, shader_uniforms, ok
 }

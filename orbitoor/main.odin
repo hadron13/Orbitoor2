@@ -135,7 +135,7 @@ main :: proc() {
 	gl_context := sdl3.GL_CreateContext(window)
 	defer sdl3.GL_DestroyContext(gl_context)
 
-	sdl3.GL_SetSwapInterval(0)
+	sdl3.GL_SetSwapInterval(-1)
 
 	gl.load_up_to(3, 3, sdl3.gl_set_proc_address)
 
@@ -293,7 +293,7 @@ main :: proc() {
 		has_sea = true,
 		sea_color = {0, 0, 0.8},
 		has_atmosphere = true,
-		atmosphere_height = 300,
+		atmosphere_height = 250,
 		rayleigh_coefficient = {0, 0, 0.8},
 	}
 
@@ -767,11 +767,17 @@ draw_celestial_body :: proc(
 
 		gl.Uniform1i(uniforms["colormap"].location, 0)
 		gl.Uniform1i(uniforms["heightmap"].location, 1)
+		gl.Uniform1i(uniforms["transmittance_lut"].location, 2)
+		gl.Uniform1i(uniforms["multiscatter_lut"].location, 3)
 
 		gl.ActiveTexture(gl.TEXTURE0)
 		gl.BindTexture(gl.TEXTURE_2D, colormap)
 		gl.ActiveTexture(gl.TEXTURE1)
 		gl.BindTexture(gl.TEXTURE_2D, heightmap)
+		gl.ActiveTexture(gl.TEXTURE2)
+		gl.BindTexture(gl.TEXTURE_2D, body.transmittance_lut)
+		gl.ActiveTexture(gl.TEXTURE3)
+		gl.BindTexture(gl.TEXTURE_2D, body.multiscatter_lut)
 	}
 
 	gl.BindVertexArray(quad_vao)

@@ -1,3 +1,5 @@
+#version 330 core
+
 const float mulScattSteps = 20.0;
 const int sqrtSamples = 8;
 
@@ -11,6 +13,7 @@ const float atmosphereRadiusMM = 6.460;
 const vec3 viewPos = vec3(0.0, groundRadiusMM + 0.0002, 0.0);
 
 const vec2 msLUTRes = vec2(32.0, 32.0);
+const vec2 tLUTRes = vec2(256.0, 64.0);
 
 const vec3 groundAlbedo = vec3(0.3);
 
@@ -26,6 +29,7 @@ const vec3 ozoneAbsorptionBase = vec3(0.650, 1.881, .085);
 
 uniform sampler2D transmittance_lut;
 
+out vec4 fragColor;
 
 
 float safeacos(const float x) {
@@ -36,7 +40,7 @@ float safeacos(const float x) {
 float rayIntersectSphere(vec3 ro, vec3 rd, float rad) {
     float b = dot(ro, rd);
     float c = dot(ro, ro) - rad*rad;
-    if (c > 0.0f && b > 0.0) return -1.0;
+    if (c > 0.0 && b > 0.0) return -1.0;
     float discr = b*b - c;
     if (discr < 0.0) return -1.0;
     // Special case: inside sphere, use far discriminant
@@ -87,6 +91,16 @@ void getScatteringValues(vec3 pos,
     extinction = rayleighScattering + rayleighAbsorption + mieScattering + mieAbsorption + ozoneAbsorption;
 }
 
+vec3 getValFromTLUT(sampler2D tex, vec2 bufferRes, vec3 pos, vec3 sunDir) {
+    float height = length(pos);
+    vec3 up = pos / height;
+	float sunCosZenithAngle = dot(sunDir, up);
+    vec2 uv = vec2(tLUTRes.x*clamp(0.5 + 0.5*sunCosZenithAngle, 0.0, 1.0),
+                   tLUTRes.y*max(0.0, min(1.0, (height - groundRadiusMM)/(atmosphereRadiusMM - groundRadiusMM))));
+    uv /= bufferRes;
+    return texture2D(tex, uv).rgb;
+}
+
 // Calculates Equation (5) and (7) from the paper.
 void getMulScattValues(vec3 pos, vec3 sunDir, out vec3 lumTotal, out vec3 fms) {
     lumTotal = vec3(0.0);
@@ -135,7 +149,7 @@ void getMulScattValues(vec3 pos, vec3 sunDir, out vec3 lumTotal, out vec3 fms) {
 
                 // This is slightly different from the paper, but I think the paper has a mistake?
                 // In equation (6), I think S(x,w_s) should be S(x-tv,w_s).
-                vec3 sunTransmittance = getValFromTLUT(iChannel0, iChannelResolution[0].xy, newPos, sunDir);
+                vec3 sunTransmittance = getValFromTLUT(transmittance_lut, tLUTRes, newPos, sunDir);
 
                 vec3 rayleighInScattering = rayleighScattering*rayleighPhaseValue;
                 float mieInScattering = mieScattering*miePhaseValue;
@@ -152,7 +166,7 @@ void getMulScattValues(vec3 pos, vec3 sunDir, out vec3 lumTotal, out vec3 fms) {
                 vec3 hitPos = pos + groundDist*rayDir;
                 if (dot(pos, sunDir) > 0.0) {
                     hitPos = normalize(hitPos)*groundRadiusMM;
-                    lum += transmittance*groundAlbedo*getValFromTLUT(iChannel0, iChannelResolution[0].xy, hitPos, sunDir);
+                    lum += transmittance*groundAlbedo*getValFromTLUT(transmittance_lut, tLUTRes, hitPos, sunDir);
                 }
             }
 
@@ -162,7 +176,6 @@ void getMulScattValues(vec3 pos, vec3 sunDir, out vec3 lumTotal, out vec3 fms) {
     }
 }
 
-out vec4 fragColor;
 
 void main(){
     if (gl_FragCoord.x >= (msLUTRes.x+1.5) || gl_FragCoord.y >= (msLUTRes.y+1.5)) {
